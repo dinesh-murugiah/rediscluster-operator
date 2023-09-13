@@ -1,0 +1,59 @@
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  creationTimestamp: null
+  name: manager-role
+rules:
+- apiGroups:
+  - redis.kun.redis.kun
+  resources:
+  - distributedredisclusters
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - redis.kun.redis.kun
+  resources:
+  - distributedredisclusters/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - redis.kun.redis.kun
+  resources:
+  - distributedredisclusters/status
+  verbs:
+  - get
+  - patch
+  - update
+- apiGroups:
+  - redis.kun.redis.kun
+  resources:
+  - redisclusterbackups
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - redis.kun.redis.kun
+  resources:
+  - redisclusterbackups/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - redis.kun.redis.kun
+  resources:
+  - redisclusterbackups/status
+  verbs:
+  - get
+  - patch
+  - update

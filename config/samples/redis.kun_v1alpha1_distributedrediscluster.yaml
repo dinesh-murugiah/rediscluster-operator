@@ -1,0 +1,12 @@
+apiVersion: redis.kun.redis.kun/v1alpha1
+kind: DistributedRedisCluster
+metadata:
+  labels:
+    app.kubernetes.io/name: distributedrediscluster
+    app.kubernetes.io/instance: distributedrediscluster-sample
+    app.kubernetes.io/part-of: redis-cluster-operator
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/created-by: redis-cluster-operator
+  name: distributedrediscluster-sample
+spec:
+  # TODO(user): Add fields here
