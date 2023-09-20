@@ -30,7 +30,7 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
-	rediskunv1alpha1 "github.com/freshworksinc/redis-cluster-operator/api/v1alpha1"
+	rediskunv1alpha1 "github.com/dinesh-murugiah/rediscluster-operator/api/v1alpha1"
 	//+kubebuilder:scaffold:imports
 )
 

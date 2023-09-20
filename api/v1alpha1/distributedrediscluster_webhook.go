@@ -22,12 +22,10 @@ import (
 	"strings"
 
 	"github.com/appscode/go/log"
-	"github.com/dinesh-murugiah/redis-cluster-operator/pkg/utils"
+	utils "github.com/dinesh-murugiah/rediscluster-operator/utils/commonutils"
 	"github.com/go-logr/logr"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilvalidation "k8s.io/apimachinery/pkg/util/validation"
-	"k8s.io/kubernetes/pkg/apis/core/validation"
-	"k8s.io/utils/field"
 	ctrl "sigs.k8s.io/controller-runtime"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
@@ -67,13 +65,13 @@ func (r *DistributedRedisCluster) ValidateCreate() error {
 	if errs := utilvalidation.IsDNS1035Label(r.Spec.ServiceName); len(r.Spec.ServiceName) > 0 && len(errs) > 0 {
 		return fmt.Errorf("the custom service is invalid: invalid value: %s, %s", r.Spec.ServiceName, strings.Join(errs, ","))
 	}
-
-	if r.Spec.Resources != nil {
-		if errs := validation.ValidateResourceRequirements(r.Spec.Resources, field.NewPath("resources")); len(errs) > 0 {
-			return errs.ToAggregate()
+	/*
+		if r.Spec.Resources != nil {
+			if errs := validation.ValidateResourceRequirements(r.Spec.Resources, field.NewPath("resources")); len(errs) > 0 {
+				return errs.ToAggregate()
+			}
 		}
-	}
-
+	*/
 	return nil
 }
 
@@ -91,13 +89,13 @@ func (r *DistributedRedisCluster) ValidateUpdate(old runtime.Object) error {
 	if errs := utilvalidation.IsDNS1035Label(r.Spec.ServiceName); len(r.Spec.ServiceName) > 0 && len(errs) > 0 {
 		return fmt.Errorf("the custom service is invalid: invalid value: %s, %s", r.Spec.ServiceName, strings.Join(errs, ","))
 	}
-
-	if r.Spec.Resources != nil {
-		if errs := validation.ValidateResourceRequirements(r.Spec.Resources, field.NewPath("resources")); len(errs) > 0 {
-			return errs.ToAggregate()
+	/*
+		if r.Spec.Resources != nil {
+			if errs := validation.ValidateResourceRequirements(r.Spec.Resources, field.NewPath("resources")); len(errs) > 0 {
+				return errs.ToAggregate()
+			}
 		}
-	}
-
+	*/
 	if oldObj.Status.Status == "" {
 		return nil
 	}
