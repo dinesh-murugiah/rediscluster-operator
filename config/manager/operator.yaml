@@ -15,7 +15,7 @@ spec:
   selector:
     matchLabels:
       control-plane: redis-cluster-operator
-  replicas: 2
+  replicas: 1
   template:
     metadata:
       annotations:
@@ -28,7 +28,7 @@ spec:
       containers:
         - name: redis-cluster-operator
           # Replace this with the built image name
-          image: docker.io/dinesh-murugiah/rediscluster-operator:4263e8d-dirty
+          image: docker.io/dinesh-murugiah/rediscluster-operator:8f74677
           command:
           - rediscluster-operator
           args:

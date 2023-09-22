@@ -83,6 +83,7 @@ type DistributedRedisClusterReconciler struct {
 //+kubebuilder:rbac:groups=redis.kun,resources=distributedredisclusters,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=redis.kun,resources=distributedredisclusters/status,verbs=get;update;patch
 //+kubebuilder:rbac:groups=redis.kun,resources=distributedredisclusters/finalizers,verbs=update
+// +kubebuilder:rbac:groups=coordination.k8s.io,resources=leases,verbs=get;list;create;update
 
 func redisclustercontrollerPredfunction() predicate.Funcs {
 
