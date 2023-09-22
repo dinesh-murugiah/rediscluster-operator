@@ -167,15 +167,19 @@ func main() {
 		setupLog.Error(err, "unable to create controller", "controller", "DistributedRedisCluster")
 		os.Exit(1)
 	}
+
+	redisclusterbackupclient := mgr.GetClient()
+	redisclusterbackupdrclient := redisclusterbackup.NewDirectClient(mgr.GetConfig())
+
 	if err = (&redisclusterbackup.RedisClusterBackupReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Client:        redisclusterbackupclient,
+		Scheme:        mgr.GetScheme(),
+		CrController:  k8sutil.NewCRControl(redisclusterbackupclient),
+		DirectClient:  redisclusterbackupdrclient,
+		JobController: k8sutil.NewJobController(redisclusterbackupdrclient),
+		Recorder:      mgr.GetEventRecorderFor("redis-cluster-operator-backup"),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "RedisClusterBackup")
-		os.Exit(1)
-	}
-	if err = (&rediskunv1alpha1.DistributedRedisCluster{}).SetupWebhookWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create webhook", "webhook", "DistributedRedisCluster")
 		os.Exit(1)
 	}
 	//+kubebuilder:scaffold:builder

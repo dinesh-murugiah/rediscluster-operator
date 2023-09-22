@@ -94,7 +94,7 @@ func redisPassword(cluster *redisv1alpha1.DistributedRedisCluster) corev1.EnvVar
 	}
 }
 
-func newDirectClient(config *rest.Config) client.Client {
+func NewDirectClient(config *rest.Config) client.Client {
 	c, err := client.New(config, client.Options{})
 	if err != nil {
 		panic(err)

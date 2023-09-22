@@ -1,19 +1,19 @@
-kind: ClusterRoleBinding
 apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
 metadata:
   labels:
-    app.kubernetes.io/name: clusterrolebinding
-    app.kubernetes.io/instance: manager-rolebinding
+    app.kubernetes.io/name: rolebinding
+    app.kubernetes.io/instance: leader-election-rolebinding
     app.kubernetes.io/component: rbac
     app.kubernetes.io/created-by: redis-cluster-operator
     app.kubernetes.io/part-of: redis-cluster-operator
     app.kubernetes.io/managed-by: kustomize
-  name: manager-rolebinding
+  name: leader-election-rolebinding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: leader-election-role
 subjects:
 - kind: ServiceAccount
   name: redis-cluster-operator
   namespace: system
-roleRef:
-  kind: ClusterRole
-  name: redis-cluster-operator
-  apiGroup: rbac.authorization.k8s.io
