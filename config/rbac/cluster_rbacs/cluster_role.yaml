@@ -87,7 +87,7 @@ rules:
     verbs:
       - update
   - apiGroups:
-      - redis.kun.redis.kun
+      - redis.kun
     resources:
       - '*'
       - redisclusterbackups

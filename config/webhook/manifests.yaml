@@ -16,7 +16,7 @@ webhooks:
   name: mdistributedrediscluster.kb.io
   rules:
   - apiGroups:
-    - redis.kun.redis.kun
+    - redis.kun
     apiVersions:
     - v1alpha1
     operations:
@@ -43,7 +43,7 @@ webhooks:
   name: vdistributedrediscluster.kb.io
   rules:
   - apiGroups:
-    - redis.kun.redis.kun
+    - redis.kun
     apiVersions:
     - v1alpha1
     operations:

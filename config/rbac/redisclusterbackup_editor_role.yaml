@@ -12,7 +12,7 @@ metadata:
   name: redisclusterbackup-editor-role
 rules:
 - apiGroups:
-  - redis.kun.redis.kun
+  - redis.kun
   resources:
   - redisclusterbackups
   verbs:
@@ -24,7 +24,7 @@ rules:
   - update
   - watch
 - apiGroups:
-  - redis.kun.redis.kun
+  - redis.kun
   resources:
   - redisclusterbackups/status
   verbs:

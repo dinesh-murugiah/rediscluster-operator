@@ -159,9 +159,9 @@ func backupcontrollerjobPredfunction() predicate.Funcs {
 	return jobPred
 }
 
-//+kubebuilder:rbac:groups=redis.kun.redis.kun,resources=redisclusterbackups,verbs=get;list;watch;create;update;patch;delete
-//+kubebuilder:rbac:groups=redis.kun.redis.kun,resources=redisclusterbackups/status,verbs=get;update;patch
-//+kubebuilder:rbac:groups=redis.kun.redis.kun,resources=redisclusterbackups/finalizers,verbs=update
+//+kubebuilder:rbac:groups=redis.kun,resources=redisclusterbackups,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=redis.kun,resources=redisclusterbackups/status,verbs=get;update;patch
+//+kubebuilder:rbac:groups=redis.kun,resources=redisclusterbackups/finalizers,verbs=update
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.

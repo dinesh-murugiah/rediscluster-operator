@@ -80,9 +80,9 @@ type DistributedRedisClusterReconciler struct {
 	CrController          k8sutil.ICustomResource
 }
 
-//+kubebuilder:rbac:groups=redis.kun.redis.kun,resources=distributedredisclusters,verbs=get;list;watch;create;update;patch;delete
-//+kubebuilder:rbac:groups=redis.kun.redis.kun,resources=distributedredisclusters/status,verbs=get;update;patch
-//+kubebuilder:rbac:groups=redis.kun.redis.kun,resources=distributedredisclusters/finalizers,verbs=update
+//+kubebuilder:rbac:groups=redis.kun,resources=distributedredisclusters,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=redis.kun,resources=distributedredisclusters/status,verbs=get;update;patch
+//+kubebuilder:rbac:groups=redis.kun,resources=distributedredisclusters/finalizers,verbs=update
 
 func redisclustercontrollerPredfunction() predicate.Funcs {
 

@@ -5,9 +5,9 @@ metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.11.1
   creationTimestamp: null
-  name: distributedredisclusters.redis.kun.redis.kun
+  name: distributedredisclusters.redis.kun
 spec:
-  group: redis.kun.redis.kun
+  group: redis.kun
   names:
     categories:
     - all

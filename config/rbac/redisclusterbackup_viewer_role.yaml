@@ -12,7 +12,7 @@ metadata:
   name: redisclusterbackup-viewer-role
 rules:
 - apiGroups:
-  - redis.kun.redis.kun
+  - redis.kun
   resources:
   - redisclusterbackups
   verbs:
@@ -20,7 +20,7 @@ rules:
   - list
   - watch
 - apiGroups:
-  - redis.kun.redis.kun
+  - redis.kun
   resources:
   - redisclusterbackups/status
   verbs:
