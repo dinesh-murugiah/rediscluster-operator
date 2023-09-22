@@ -25,6 +25,7 @@ import (
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
+	"k8s.io/client-go/rest"
 
 	"k8s.io/apimachinery/pkg/runtime"
 	runtimeschema "k8s.io/apimachinery/pkg/runtime/schema"
@@ -47,8 +48,17 @@ import (
 	"github.com/dinesh-murugiah/rediscluster-operator/version"
 	"github.com/spf13/pflag"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
+	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	//+kubebuilder:scaffold:imports
 )
+
+/*
+var (
+	metricsHost               = "0.0.0.0"
+	metricsPort         int32 = 8383
+	operatorMetricsPort int32 = 8686
+)
+*/
 
 var (
 	scheme     = runtime.NewScheme()
@@ -106,8 +116,7 @@ func main() {
 
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme:                 scheme,
-		MetricsBindAddress:     metricsAddr,
-		Port:                   9443,
+		Metrics:                metricsserver.Options{BindAddress: metricsAddr},
 		HealthProbeBindAddress: probeAddr,
 		LeaderElection:         enableLeaderElection,
 		LeaderElectionID:       "9973c3fe.redis.kun",
@@ -134,7 +143,11 @@ func main() {
 		Version: "v1",
 		Kind:    "Pod",
 	}
-	restClient, err := apiutil.RESTClientForGVK(gvk, false, mgr.GetConfig(), serializer.NewCodecFactory(clientgoscheme.Scheme))
+	httpClient, err := rest.HTTPClientFor(mgr.GetConfig())
+	if err != nil {
+		os.Exit(1)
+	}
+	restClient, err := apiutil.RESTClientForGVK(gvk, false, mgr.GetConfig(), serializer.NewCodecFactory(clientgoscheme.Scheme), httpClient)
 	if err != nil {
 		os.Exit(1)
 	}
@@ -178,9 +191,11 @@ func main() {
 
 	if os.Getenv("ENABLE_WEBHOOKS") == "true" {
 		log.Info("Starting the WebHook.")
-		ws := mgr.GetWebhookServer()
-		ws.CertDir = "/etc/webhook/certs"
-		ws.Port = 7443
+		/*
+			ws := mgr.GetWebhookServer()
+			ws.CertDir = "/etc/webhook/certs"
+			ws.Port = 7443
+		*/
 		if err = (&rediskunv1alpha1.DistributedRedisCluster{}).SetupWebhookWithManager(mgr); err != nil {
 			log.Error(err, "unable to create webHook", "webHook", "DistributedRedisCluster")
 			os.Exit(1)

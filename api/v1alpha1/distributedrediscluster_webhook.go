@@ -29,6 +29,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
+	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 )
 
 // log is for logging in this package.
@@ -59,11 +60,11 @@ func (r *DistributedRedisCluster) Default() {
 var _ webhook.Validator = &DistributedRedisCluster{}
 
 // ValidateCreate implements webhook.Validator so a webhook will be registered for the type
-func (r *DistributedRedisCluster) ValidateCreate() error {
+func (r *DistributedRedisCluster) ValidateCreate() (admission.Warnings, error) {
 	distributedredisclusterlog.Info("validate create", "name", r.Name)
 
 	if errs := utilvalidation.IsDNS1035Label(r.Spec.ServiceName); len(r.Spec.ServiceName) > 0 && len(errs) > 0 {
-		return fmt.Errorf("the custom service is invalid: invalid value: %s, %s", r.Spec.ServiceName, strings.Join(errs, ","))
+		return nil, fmt.Errorf("the custom service is invalid: invalid value: %s, %s", r.Spec.ServiceName, strings.Join(errs, ","))
 	}
 	/*
 		if r.Spec.Resources != nil {
@@ -72,22 +73,22 @@ func (r *DistributedRedisCluster) ValidateCreate() error {
 			}
 		}
 	*/
-	return nil
+	return nil, nil
 }
 
 // ValidateUpdate implements webhook.Validator so a webhook will be registered for the type
-func (r *DistributedRedisCluster) ValidateUpdate(old runtime.Object) error {
+func (r *DistributedRedisCluster) ValidateUpdate(old runtime.Object) (admission.Warnings, error) {
 	distributedredisclusterlog.Info("validate update", "name", r.Name)
 
 	oldObj, ok := old.(*DistributedRedisCluster)
 	if !ok {
 		err := fmt.Errorf("invalid obj type")
 		log.Error(err, "can not reflect type")
-		return err
+		return nil, err
 	}
 
 	if errs := utilvalidation.IsDNS1035Label(r.Spec.ServiceName); len(r.Spec.ServiceName) > 0 && len(errs) > 0 {
-		return fmt.Errorf("the custom service is invalid: invalid value: %s, %s", r.Spec.ServiceName, strings.Join(errs, ","))
+		return nil, fmt.Errorf("the custom service is invalid: invalid value: %s, %s", r.Spec.ServiceName, strings.Join(errs, ","))
 	}
 	/*
 		if r.Spec.Resources != nil {
@@ -97,12 +98,12 @@ func (r *DistributedRedisCluster) ValidateUpdate(old runtime.Object) error {
 		}
 	*/
 	if oldObj.Status.Status == "" {
-		return nil
+		return nil, nil
 	}
 	if compareObj(r, oldObj, distributedredisclusterlog) && oldObj.Status.Status != ClusterStatusOK {
-		return fmt.Errorf("redis cluster status: [%s], wait for the status to become %s before operating", oldObj.Status.Status, ClusterStatusOK)
+		return nil, fmt.Errorf("redis cluster status: [%s], wait for the status to become %s before operating", oldObj.Status.Status, ClusterStatusOK)
 	}
-	return nil
+	return nil, nil
 }
 func compareObj(new, old *DistributedRedisCluster, log logr.Logger) bool {
 	if utils.CompareInt32("MasterSize", new.Spec.MasterSize, old.Spec.MasterSize, log) {
@@ -127,9 +128,9 @@ func compareObj(new, old *DistributedRedisCluster, log logr.Logger) bool {
 }
 
 // ValidateDelete implements webhook.Validator so a webhook will be registered for the type
-func (r *DistributedRedisCluster) ValidateDelete() error {
+func (r *DistributedRedisCluster) ValidateDelete() (admission.Warnings, error) {
 	distributedredisclusterlog.Info("validate delete", "name", r.Name)
 
 	// TODO(user): fill in your validation logic upon object deletion.
-	return nil
+	return nil, nil
 }

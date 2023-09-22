@@ -14,7 +14,11 @@ func NewClient(config *rest.Config) (client.Client, error) {
 	// To check its correctness by testing
 	_ = clientgoscheme.AddToScheme(scheme)
 
-	mapper, err := apiutil.NewDiscoveryRESTMapper(config)
+	httpClient, err := rest.HTTPClientFor(config)
+	if err != nil {
+		return nil, err
+	}
+	mapper, err := apiutil.NewDiscoveryRESTMapper(config, httpClient)
 	if err != nil {
 		return nil, err
 	}

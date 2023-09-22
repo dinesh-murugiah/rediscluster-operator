@@ -19,3 +19,8 @@
 
 # Go workspace file
 go.work
+/main
+/Dockerfile-withvendor
+Dockerfile-TZSH
+skaffold.yaml
+bin/

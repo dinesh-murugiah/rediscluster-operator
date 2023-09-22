@@ -3,7 +3,8 @@
 # To re-generate a bundle for another specific version without changing the standard setup, you can:
 # - use the VERSION as arg of the bundle target (e.g make bundle VERSION=0.0.2)
 # - use environment variables to overwrite this value (e.g export VERSION=0.0.2)
-VERSION ?= 0.0.1
+VERSION = $(shell git describe --always --tags --dirty | sed "s/\(.*\)-g`git rev-parse --short HEAD`/\1/")
+GIT_SHA=$(shell git rev-parse --short HEAD)
 
 # CHANNELS define the bundle channels used in the bundle.
 # Add a new line here if you would like to change its default config. (E.g CHANNELS = "candidate,fast,stable")
@@ -62,6 +63,13 @@ else
 GOBIN=$(shell go env GOBIN)
 endif
 
+
+PROJECT_NAME=rediscluster-operator
+REPO=dinesh-murugiah/$(PROJECT_NAME)
+DOCKER_REGISTRY=local
+BIN_DIR=bin/operator
+ALTREPO=$(REPO)
+
 # Setting SHELL to bash allows bash commands to be executed by recipes.
 # Options are set to exit when a recipe line exits non-zero or a piped command fails.
 SHELL = /usr/bin/env bash -o pipefail
@@ -113,7 +121,12 @@ test: manifests generate fmt vet envtest ## Run tests.
 
 .PHONY: build
 build: manifests generate fmt vet ## Build manager binary.
-	go build -o bin/manager main.go
+	GO111MODULE=on CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
+	-ldflags "-X github.com/$(REPO)/version.Version=$(VERSION) -X github.com/$(REPO)/version.GitSHA=$(GIT_SHA)" \
+	-o $(BIN_DIR)/$(PROJECT_NAME)-linux-amd64 main.go
+	GO111MODULE=on CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build \
+	-ldflags "-X github.com/$(REPO)/version.Version=$(VERSION) -X github.com/$(REPO)/version.GitSHA=$(GIT_SHA)" \
+	-o $(BIN_DIR)/$(PROJECT_NAME)-darwin-amd64 main.go
 
 .PHONY: run
 run: manifests generate fmt vet ## Run a controller from your host.
@@ -123,13 +136,17 @@ run: manifests generate fmt vet ## Run a controller from your host.
 # (i.e. docker build --platform linux/arm64 ). However, you must enable docker buildKit for it.
 # More info: https://docs.docker.com/develop/develop-images/build_enhancements/
 .PHONY: docker-build
-docker-build: test ## Build docker image with the manager.
-	docker build -t ${IMG} .
+docker-build:  ## Build docker image with the manager.
+	DOCKER_BUILDKIT=1 docker build --build-arg VERSION=$(VERSION) --build-arg GIT_SHA=$(GIT_SHA) -t $(ALTREPO):$(VERSION) . --load
+	docker tag $(ALTREPO):$(VERSION) $(ALTREPO):latest
 
 .PHONY: docker-push
 docker-push: ## Push docker image with the manager.
 	docker push ${IMG}
 
+.PHONY: clean
+clean:
+	rm -f $(BIN_DIR)/$(PROJECT_NAME)*
 # PLATFORMS defines the target platforms for  the manager image be build to provide support to multiple
 # architectures. (i.e. make docker-buildx IMG=myregistry/mypoperator:0.0.1). To use this option you need to:
 # - able to use docker buildx . More info: https://docs.docker.com/build/buildx/

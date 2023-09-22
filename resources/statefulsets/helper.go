@@ -105,7 +105,7 @@ func parseAclInput(input string) map[string]string {
 		fields := strings.Fields(line)
 
 		if len(fields) >= 3 && fields[0] == "user" {
-			if fields[1] != "admin" || fields[1] != "pinger" {
+			if fields[1] != "admin" && fields[1] != "pinger" {
 				key := fields[1]
 				value := strings.Join(fields[1:], " ")
 				data[key] = value
