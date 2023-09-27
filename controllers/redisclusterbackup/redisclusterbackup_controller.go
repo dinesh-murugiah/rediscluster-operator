@@ -69,11 +69,12 @@ func FlagSet() *pflag.FlagSet {
 // RedisClusterBackupReconciler reconciles a RedisClusterBackup object
 type RedisClusterBackupReconciler struct {
 	client.Client
-	Scheme        *runtime.Scheme
-	DirectClient  client.Client
-	Recorder      record.EventRecorder
-	CrController  k8sutil.ICustomResource
-	JobController k8sutil.IJobControl
+	Scheme                *runtime.Scheme
+	DirectClient          client.Client
+	Recorder              record.EventRecorder
+	CrController          k8sutil.ICustomResource
+	StatefulSetController k8sutil.IStatefulSetControl
+	JobController         k8sutil.IJobControl
 }
 
 func redisbackupcontrollerPredfunction() predicate.Funcs {

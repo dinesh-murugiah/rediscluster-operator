@@ -367,7 +367,7 @@ func (r *DistributedRedisClusterReconciler) checkandUpadtePassword(client client
 		} else {
 			ctx.reqLogger.Info("Printing acl commands to be run:")
 			for key, value := range aclcommands {
-				ctx.reqLogger.Info("user: ", key, "aclcommand: ", value)
+				ctx.reqLogger.Info("acl commands", "user: ", key, "aclcommand: ", value)
 			}
 		}
 		/*

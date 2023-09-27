@@ -1,0 +1,17 @@
+
+apiVersion: redis.kun/v1alpha1
+kind: RedisClusterBackup
+metadata:
+  name: example-redisclusterbackup
+  annotations:
+    redis.kun/scope: cluster-scoped
+spec:
+  image: operator/redis-tools:5.0.4
+  # on same namespace
+  redisClusterName: example-distributedrediscluster
+  local:
+    mountPath: /bkp
+    emptyDir:
+      sizeLimit: 1Gi
+  backupCronEnable: true
+  backupSchedule: "*/3 * * * *"

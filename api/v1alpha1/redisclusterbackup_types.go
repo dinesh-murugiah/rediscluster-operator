@@ -158,6 +158,8 @@ type PodSpec struct {
 type BackupPhase string
 
 const (
+	// used for Backup that are getting initiated
+	BackupPhaseStarting BackupPhase = "Initiating"
 	// used for Backup that are currently running
 	BackupPhaseRunning BackupPhase = "Running"
 	// used for Backup that are Succeeded

@@ -13,6 +13,7 @@ import (
 
 	redisv1alpha1 "github.com/dinesh-murugiah/rediscluster-operator/api/v1alpha1"
 	"github.com/dinesh-murugiah/rediscluster-operator/osm"
+	"github.com/dinesh-murugiah/rediscluster-operator/resources/statefulsets"
 	utils "github.com/dinesh-murugiah/rediscluster-operator/utils/commonutils"
 	"github.com/dinesh-murugiah/rediscluster-operator/utils/event"
 	"github.com/dinesh-murugiah/rediscluster-operator/utils/k8sutil"
@@ -25,18 +26,32 @@ const (
 
 func (r *RedisClusterBackupReconciler) create(reqLogger logr.Logger, backup *redisv1alpha1.RedisClusterBackup) (error, bool) {
 
-	if err := r.ValidateBackup(backup); err != nil {
-		if k8sutil.IsRequestRetryable(err) {
-			return err, backupRetry
-		}
-		r.markAsFailedBackup(backup, err.Error())
+	if err := r.ValidateBackup(backup, reqLogger); err != nil {
+		/*
+			// Commenting out to allways retry when validate backup fails, any major error in CR definition has to be caught in Webhook and not here
+				if k8sutil.IsRequestRetryable(err) {
+					reqLogger.Error(err, "Validation Failed Retrying")
+					return err, backupRetry
+				}
+				r.markAsFailedBackup(backup, err.Error())
+				r.Recorder.Event(
+					backup,
+					corev1.EventTypeWarning,
+					event.BackupFailed,
+					err.Error(),
+				)
+				reqLogger.Info("Validation Failed NotRetrying")
+				return nil, backupNoRetry // stop retry
+		*/
+		reqLogger.Error(err, "Backup Validation Failed: Either Problem with CR or cluster not yet ready for backup - Retrying")
 		r.Recorder.Event(
 			backup,
 			corev1.EventTypeWarning,
-			event.BackupFailed,
+			event.BackupError,
 			err.Error(),
 		)
-		return nil, backupNoRetry // stop retry
+		reqLogger.Info("Validation Failed Retrying")
+		return nil, backupRetry
 	}
 
 	if backup.Status.StartTime == nil ||
@@ -51,6 +66,7 @@ func (r *RedisClusterBackupReconciler) create(reqLogger logr.Logger, backup *red
 				event.BackupError,
 				err.Error(),
 			)
+			reqLogger.Error(err, "Backup CR status upadate Failed : In setting time")
 			return err, backupRetry
 		}
 	}
@@ -67,6 +83,7 @@ func (r *RedisClusterBackupReconciler) create(reqLogger logr.Logger, backup *red
 				event.BackupError,
 				err.Error(),
 			)
+			reqLogger.Error(err, "Backup CR upadate Failed : In Deleting lables")
 			return err, backupRetry
 		}
 		return nil, backupNoRetry
@@ -80,6 +97,7 @@ func (r *RedisClusterBackupReconciler) create(reqLogger logr.Logger, backup *red
 			event.BackupError,
 			err.Error(),
 		)
+		reqLogger.Error(err, "Error in checking if Backup Running:", running)
 		return err, backupRetry
 	}
 	if running {
@@ -124,6 +142,7 @@ func (r *RedisClusterBackupReconciler) create(reqLogger logr.Logger, backup *red
 			event.BackupError,
 			err.Error(),
 		)
+		reqLogger.Error(err, "Create secret for backup failed")
 		return err, backupRetry
 	}
 
@@ -154,7 +173,6 @@ func (r *RedisClusterBackupReconciler) create(reqLogger logr.Logger, backup *red
 		}
 		return r.markAsFailedBackup(backup, message), backupNoRetry
 	}
-
 	backup.Status.Phase = redisv1alpha1.BackupPhaseRunning
 	backup.Status.MasterSize = cluster.Spec.MasterSize
 	backup.Status.ClusterReplicas = cluster.Spec.ClusterReplicas
@@ -168,9 +186,13 @@ func (r *RedisClusterBackupReconciler) create(reqLogger logr.Logger, backup *red
 		)
 		return err, backupRetry
 	}
+	if backup.Labels == nil {
+		backup.Labels = make(map[string]string)
+	}
+	backup.Labels[string(redisv1alpha1.LabelClusterName)] = backup.Spec.RedisClusterName
+	backup.Labels[string(redisv1alpha1.LabelBackupStatus)] = string(redisv1alpha1.BackupPhaseRunning)
 
-	backup.Labels[redisv1alpha1.LabelClusterName] = backup.Spec.RedisClusterName
-	backup.Labels[redisv1alpha1.LabelBackupStatus] = string(redisv1alpha1.BackupPhaseRunning)
+	reqLogger.Info("Updating CR")
 	if err := r.CrController.UpdateCR(backup); err != nil {
 		r.Recorder.Event(
 			backup,
@@ -196,24 +218,39 @@ func (r *RedisClusterBackupReconciler) create(reqLogger logr.Logger, backup *red
 			event.BackupError,
 			err.Error(),
 		)
+		reqLogger.Error(err, "Error creating backup job")
 		return err, backupRetry
 	}
 
 	return nil, backupNoRetry
 }
 
-func (r *RedisClusterBackupReconciler) ValidateBackup(backup *redisv1alpha1.RedisClusterBackup) error {
-	if backup.Labels == nil {
-		backup.Labels = make(map[string]string)
-	}
+func (r *RedisClusterBackupReconciler) ValidateBackup(backup *redisv1alpha1.RedisClusterBackup, reqLogger logr.Logger) error {
+
+	// Optimisation -- Ideally this check has to be part of valiudation webhooks and not part of reconcile loop
 	if err := backup.Validate(); err != nil {
 		return err
 	}
+	cluster, err := r.CrController.GetDistributedRedisCluster(backup.Namespace, backup.Spec.RedisClusterName)
 
-	if _, err := r.CrController.GetDistributedRedisCluster(backup.Namespace, backup.Spec.RedisClusterName); err != nil {
+	if err != nil {
+		reqLogger.Error(err, "ValidateBackup unable to get cluster instance")
 		return err
 	}
-
+	for i := 0; i < int(cluster.Spec.MasterSize); i++ {
+		name := statefulsets.ClusterStatefulSetName(cluster.Name, i)
+		//reqLogger.Info("ValidateBackup:", "STS name:", name)
+		ss, serr := r.StatefulSetController.GetStatefulSet(cluster.Namespace, name)
+		if serr != nil {
+			reqLogger.Error(err, "ValidateBackup Failed getting statefulsets")
+			return serr
+		}
+		if ss.Status.CurrentReplicas != (cluster.Spec.ClusterReplicas + 1) {
+			reqLogger.Error(err, "ValidateBackup Failed ", "Replicas Expected in STS:", (cluster.Spec.ClusterReplicas + 1), "Current:", ss.Status.CurrentReplicas)
+			return fmt.Errorf("cluster STS not yet ready")
+		}
+		//reqLogger.Info("ValidateBackup:", "STS name:", name, "Replica Count:", ss.Status.CurrentReplicas)
+	}
 	return nil
 }
 
@@ -478,6 +515,7 @@ func (r *RedisClusterBackupReconciler) handleBackupJob(reqLogger logr.Logger, ba
 					event.BackupError,
 					err.Error(),
 				)
+				reqLogger.Error(err, "Handle Backup Job, update CR failed")
 				return err, backupRetry
 			}
 			r.Recorder.Event(
@@ -488,6 +526,7 @@ func (r *RedisClusterBackupReconciler) handleBackupJob(reqLogger logr.Logger, ba
 			)
 			return nil, backupRetry
 		}
+		reqLogger.Error(err, "Handle Backup Job, Get job failed")
 		return err, backupRetry
 	}
 	if !isJobFinished(jobObj) {

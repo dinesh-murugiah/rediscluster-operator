@@ -72,7 +72,7 @@ func GenerateAclcommands(log logr.Logger, client client.Client, cluster *redisv1
 		} else if map1Value, ok := existingsecretver[key]; ok {
 			map2Value := newsecretver[key]
 			if !reflect.DeepEqual(map1Value, map2Value) {
-				log.Info("diffAclConfigs", "update in acl data found for user/secret", key)
+				log.Info("diffAclConfigs", "update in acl data found for user/secret", key, "command:", newacldata[key])
 				aclcommands[key] = fmt.Sprintf("acl setuser %s", newacldata[key])
 			}
 		}

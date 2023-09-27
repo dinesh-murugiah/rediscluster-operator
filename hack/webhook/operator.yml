@@ -2,43 +2,41 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: redis-cluster-operator
-  namespace: system
-  labels:
-    control-plane: redis-cluster-operator
-    app.kubernetes.io/name: deployment
-    app.kubernetes.io/instance: controller-manager
-    app.kubernetes.io/component: manager
-    app.kubernetes.io/created-by: redis-cluster-operator
-    app.kubernetes.io/part-of: redis-cluster-operator
-    app.kubernetes.io/managed-by: kustomize
 spec:
+  replicas: 1
   selector:
     matchLabels:
-      control-plane: redis-cluster-operator
-  replicas: 1
+      name: redis-cluster-operator
   template:
     metadata:
-      annotations:
-        kubectl.kubernetes.io/default-container: redis-cluster-operator
       labels:
-        control-plane: redis-cluster-operator
+        name: redis-cluster-operator
     spec:
       serviceAccountName: redis-cluster-operator
-
       containers:
         - name: redis-cluster-operator
-          # Replace this with the built image name
-          image: docker.io/dinesh-murugiah/rediscluster-operator:2bdead4-dirty
+          image: fishu/redis-cluster-operator:latest
           command:
-          - rediscluster-operator
+            - redis-cluster-operator
           args:
-          - --zap-log-level=debug
-          - --rename-command-path=/etc/redisconf
-          - --rename-command-file=redis.conf
-          imagePullPolicy: IfNotPresent
+            - --zap-level=4
+            - --zap-time-encoding=iso8601
+            - --ctr-maxconcurrent=10
+            - --rename-command-path=/etc/redisconf
+            - --rename-command-file=redis.conf
+          imagePullPolicy: Always
+          resources:
+            limits:
+              cpu: "2"
+              memory: 2000Mi
+            requests:
+              cpu: 500m
+              memory: 500Mi
           env:
             - name: WATCH_NAMESPACE
               value: ""
+            - name: ENABLE_WEBHOOKS
+              value: "true"
             - name: POD_NAME
               valueFrom:
                 fieldRef:
@@ -48,16 +46,21 @@ spec:
           volumeMounts:
             - name: redisconf
               mountPath: /etc/redisconf
+            - name: webhook-certs
+              mountPath: /etc/webhook/certs
+              readOnly: true
       volumes:
         - name: redisconf
           configMap:
             name: redis-admin
+        - name: webhook-certs
+          secret:
+            secretName: drc-webhook-cert
 ---
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: redis-admin
-  namespace: system
 data:
   redis.conf: |-
     rename-command CONFIG lni07z1p
@@ -67,3 +70,5 @@ data:
     rename-command SHUTDOWN dvui0opr
     rename-command SLAVEOF xwxvcw36
     rename-command BGREWRITEAOF www07fko
+    rename-command FLUSHDB dfqw3rsf
+    rename-command FLUSHALL zvsdf2ff

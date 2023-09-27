@@ -1,0 +1,88 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  annotations:
+    # if your operator run as cluster-scoped, add this annotations
+    redis.kun/scope: cluster-scoped
+  name: adminsecret
+type: Opaque
+stringData:
+  acl: ~* +@all
+  password: admin
+  username: admin
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  annotations:
+    # if your operator run as cluster-scoped, add this annotations
+    redis.kun/scope: cluster-scoped
+  name: defaultsecret
+type: Opaque
+stringData:
+  acl: ~* +@all
+  password: testpwd@123
+  username: default
+---
+
+apiVersion: v1
+kind: Secret
+metadata:
+  annotations:
+    # if your operator run as cluster-scoped, add this annotations
+    redis.kun/scope: cluster-scoped
+  name: user1
+type: Opaque
+stringData:
+  acl: ~* +@all
+  password: dinesh@1234
+  username: dinesh
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  annotations:
+    # if your operator run as cluster-scoped, add this annotations
+    redis.kun/scope: cluster-scoped
+  name: user2
+type: Opaque
+stringData:
+  acl: ~* +@all
+  password: samuel@123
+  username: samuel
+---
+
+
+apiVersion: redis.kun/v1alpha1
+kind: DistributedRedisCluster
+metadata:
+  annotations:
+    # if your operator run as cluster-scoped, add this annotations
+    redis.kun/scope: cluster-scoped
+  name: example-distributedrediscluster
+spec:
+  initContainers:
+  - name: initialize
+    image: hello-world:latest
+    imagePullPolicy: IfNotPresent
+  masterSize: 3
+  clusterReplicas: 1
+  adminUser:
+    name: adminsecret
+  defaultUser:
+    name: defaultsecret
+  additionalUsers:
+    - name: user1
+    - name: user2
+  image: redis:6.2.12
+  resources:
+    limits:
+      cpu: 400m
+      memory: 1000Mi
+    requests:
+      cpu: 300m
+      memory: 600Mi
+  storage:
+    type: ephemeral
+    size: 1Gi
+    class: ""

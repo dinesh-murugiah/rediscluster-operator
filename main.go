@@ -90,6 +90,11 @@ func main() {
 		"Enable leader election for controller manager. "+
 			"Enabling this will ensure there is only one active controller manager.")
 
+	opts := zap.Options{
+		Development: true,
+	}
+	opts.BindFlags(flag.CommandLine)
+
 	pflag.CommandLine.AddFlagSet(distributedrediscluster.FlagSet())
 	pflag.CommandLine.AddFlagSet(redisclusterbackup.FlagSet())
 
@@ -101,18 +106,10 @@ func main() {
 
 	pflag.Parse()
 
-	opts := zap.Options{
-		Development: true,
-	}
-	opts.BindFlags(flag.CommandLine)
-	zlog := zap.New(zap.UseFlagOptions(&opts))
-	logf.SetLogger(zlog)
-
+	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
 	printVersion()
 
 	utils.SetClusterScoped("")
-
-	ctrl.SetLogger(zlog)
 
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme:                 scheme,
@@ -172,12 +169,13 @@ func main() {
 	redisclusterbackupdrclient := redisclusterbackup.NewDirectClient(mgr.GetConfig())
 
 	if err = (&redisclusterbackup.RedisClusterBackupReconciler{
-		Client:        redisclusterbackupclient,
-		Scheme:        mgr.GetScheme(),
-		CrController:  k8sutil.NewCRControl(redisclusterbackupclient),
-		DirectClient:  redisclusterbackupdrclient,
-		JobController: k8sutil.NewJobController(redisclusterbackupdrclient),
-		Recorder:      mgr.GetEventRecorderFor("redis-cluster-operator-backup"),
+		Client:                redisclusterbackupclient,
+		Scheme:                mgr.GetScheme(),
+		CrController:          k8sutil.NewCRControl(redisclusterbackupclient),
+		StatefulSetController: k8sutil.NewStatefulSetController(redisclusterbackupclient),
+		DirectClient:          redisclusterbackupdrclient,
+		JobController:         k8sutil.NewJobController(redisclusterbackupdrclient),
+		Recorder:              mgr.GetEventRecorderFor("redis-cluster-operator-backup"),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "RedisClusterBackup")
 		os.Exit(1)

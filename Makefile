@@ -140,6 +140,10 @@ docker-build:  ## Build docker image with the manager.
 	DOCKER_BUILDKIT=1 docker build --build-arg VERSION=$(VERSION) --build-arg GIT_SHA=$(GIT_SHA) -t $(ALTREPO):$(VERSION) . --load
 	docker tag $(ALTREPO):$(VERSION) $(ALTREPO):latest
 
+.PHONY: build-tools
+build-tools:
+	bash hack/docker/redis-tools/make.sh build
+
 .PHONY: docker-push
 docker-push: ## Push docker image with the manager.
 	docker push ${IMG}
