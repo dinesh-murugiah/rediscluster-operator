@@ -1,17 +1,17 @@
 package distributedrediscluster
 
 import (
+	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	redisv1alpha1 "github.com/dinesh-murugiah/rediscluster-operator/api/v1alpha1"
 	"github.com/dinesh-murugiah/rediscluster-operator/controllers/clustering"
 	"github.com/dinesh-murugiah/rediscluster-operator/controllers/manager"
-	config "github.com/dinesh-murugiah/rediscluster-operator/redisconfig"
 	"github.com/dinesh-murugiah/rediscluster-operator/resources/statefulsets"
 	"github.com/dinesh-murugiah/rediscluster-operator/utils/k8sutil"
 	"github.com/dinesh-murugiah/rediscluster-operator/utils/redisutil"
@@ -169,8 +169,8 @@ func (r *DistributedRedisClusterReconciler) initRestore(cluster *redisv1alpha1.D
 	return update, nil
 }
 
-func (r *DistributedRedisClusterReconciler) waitForClusterJoin(ctx *syncContext) error {
-	if infos, err := ctx.admin.GetClusterInfos(); err == nil {
+func (r *DistributedRedisClusterReconciler) waitForClusterJoin(ctx *syncContext, context context.Context) error {
+	if infos, err := ctx.admin.GetClusterInfos(context); err == nil {
 		ctx.reqLogger.V(6).Info("debug waitForClusterJoin", "cluster infos", infos)
 		return nil
 	}
@@ -180,7 +180,7 @@ func (r *DistributedRedisClusterReconciler) waitForClusterJoin(ctx *syncContext)
 		break
 	}
 	ctx.reqLogger.Info(">>> Sending CLUSTER MEET messages to join the cluster")
-	err := ctx.admin.AttachNodeToCluster(firstNode.IPPort())
+	err := ctx.admin.AttachNodeToCluster(context, firstNode.IPPort())
 	if err != nil {
 		return Redis.Wrap(err, "AttachNodeToCluster")
 	}
@@ -189,14 +189,14 @@ func (r *DistributedRedisClusterReconciler) waitForClusterJoin(ctx *syncContext)
 	// the config as they are still empty with unassigned slots.
 	time.Sleep(1 * time.Second)
 
-	_, err = ctx.admin.GetClusterInfos()
+	_, err = ctx.admin.GetClusterInfos(context)
 	if err != nil {
 		return Requeue.Wrap(err, "wait for cluster join")
 	}
 	return nil
 }
 
-func (r *DistributedRedisClusterReconciler) syncCluster(ctx *syncContext) error {
+func (r *DistributedRedisClusterReconciler) syncCluster(ctx *syncContext, context context.Context) error {
 	cluster := ctx.cluster
 	admin := ctx.admin
 	clusterInfos := ctx.clusterInfos
@@ -218,11 +218,11 @@ func (r *DistributedRedisClusterReconciler) syncCluster(ctx *syncContext) error 
 			return Cluster.Wrap(err, "PlaceSlaves")
 
 		}
-		if err := clusterCtx.AttachingSlavesToMaster(admin); err != nil {
+		if err := clusterCtx.AttachingSlavesToMaster(admin, context); err != nil {
 			return Cluster.Wrap(err, "AttachingSlavesToMaster")
 		}
 
-		if err := clusterCtx.AllocSlots(admin, newMasters); err != nil {
+		if err := clusterCtx.AllocSlots(admin, newMasters, context); err != nil {
 			return Cluster.Wrap(err, "AllocSlots")
 		}
 	} else if len(newMasters) > len(curMasters) {
@@ -231,11 +231,11 @@ func (r *DistributedRedisClusterReconciler) syncCluster(ctx *syncContext) error 
 			return Cluster.Wrap(err, "PlaceSlaves")
 
 		}
-		if err := clusterCtx.AttachingSlavesToMaster(admin); err != nil {
+		if err := clusterCtx.AttachingSlavesToMaster(admin, context); err != nil {
 			return Cluster.Wrap(err, "AttachingSlavesToMaster")
 		}
 
-		if err := clusterCtx.RebalancedCluster(admin, newMasters); err != nil {
+		if err := clusterCtx.RebalancedCluster(admin, newMasters, context); err != nil {
 			return Cluster.Wrap(err, "RebalancedCluster")
 		}
 	} else if cluster.Status.MinReplicationFactor < cluster.Spec.ClusterReplicas {
@@ -244,7 +244,7 @@ func (r *DistributedRedisClusterReconciler) syncCluster(ctx *syncContext) error 
 			return Cluster.Wrap(err, "PlaceSlaves")
 
 		}
-		if err := clusterCtx.AttachingSlavesToMaster(admin); err != nil {
+		if err := clusterCtx.AttachingSlavesToMaster(admin, context); err != nil {
 			return Cluster.Wrap(err, "AttachingSlavesToMaster")
 		}
 	} else if len(curMasters) > int(expectMasterNum) {
@@ -252,17 +252,17 @@ func (r *DistributedRedisClusterReconciler) syncCluster(ctx *syncContext) error 
 		var allMaster redisutil.Nodes
 		allMaster = append(allMaster, newMasters...)
 		allMaster = append(allMaster, curMasters...)
-		if err := clusterCtx.DispatchSlotToNewMasters(admin, newMasters, curMasters, allMaster); err != nil {
+		if err := clusterCtx.DispatchSlotToNewMasters(admin, newMasters, curMasters, allMaster, context); err != nil {
 			return err
 		}
-		if err := r.scalingDown(ctx, len(curMasters), clusterCtx.GetStatefulsetNodes()); err != nil {
+		if err := r.scalingDown(ctx, len(curMasters), clusterCtx.GetStatefulsetNodes(), context); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (r *DistributedRedisClusterReconciler) scalingDown(ctx *syncContext, currentMasterNum int, statefulSetNodes map[string]redisutil.Nodes) error {
+func (r *DistributedRedisClusterReconciler) scalingDown(ctx *syncContext, currentMasterNum int, statefulSetNodes map[string]redisutil.Nodes, context context.Context) error {
 	cluster := ctx.cluster
 	SetClusterRebalancing(&cluster.Status,
 		fmt.Sprintf("scale down, currentMasterSize: %d, expectMasterSize %d", currentMasterNum, cluster.Spec.MasterSize))
@@ -272,7 +272,7 @@ func (r *DistributedRedisClusterReconciler) scalingDown(ctx *syncContext, curren
 	for i := currentMasterNum - 1; i >= expectMasterNum; i-- {
 		stsName := statefulsets.ClusterStatefulSetName(cluster.Name, i)
 		for _, node := range statefulSetNodes[stsName] {
-			admin.Connections().Remove(node.IPPort())
+			admin.Connections().Remove(context, node.IPPort())
 		}
 	}
 	for i := currentMasterNum - 1; i >= expectMasterNum; i-- {
@@ -287,7 +287,7 @@ func (r *DistributedRedisClusterReconciler) scalingDown(ctx *syncContext, curren
 			if len(node.Slots) > 0 {
 				return Redis.New(fmt.Sprintf("node %s is not empty! Reshard data away and try again", node.String()))
 			}
-			if err := admin.ForgetNode(node.ID); err != nil {
+			if err := admin.ForgetNode(context, node.ID); err != nil {
 				return Redis.Wrap(err, "ForgetNode")
 			}
 		}
@@ -324,50 +324,41 @@ func (r *DistributedRedisClusterReconciler) scalingDown(ctx *syncContext, curren
 	return nil
 }
 
-func (r *DistributedRedisClusterReconciler) checkandUpadtePassword(client client.Client, ctx *syncContext) (error, map[string]string) {
+func (r *DistributedRedisClusterReconciler) checkandUpdatePassword(admin redisutil.IAdmin, ctx *syncContext, context context.Context) (map[string]string, error) {
 
-	passChanged, newaclconf, newsecretver, err1 := r.Checker.CheckPasswordChanged(ctx.cluster)
-	if err1 != nil {
-		ctx.reqLogger.Error(err1, "error when checking acl difference")
-		return err1, nil
+	passChanged, newaclconf, newsecretver, err := r.Checker.CheckPasswordChanged(ctx.cluster)
+	if err != nil {
+		ctx.reqLogger.Error(err, "Error while checking difference in ACL")
+		return nil, err
 	}
 	if !passChanged {
-		ctx.reqLogger.Info("no changes in acl secrets when checking acl differences")
+		ctx.reqLogger.Info("No changes in acl secrets, Proceeding..")
 		return nil, nil
 	}
-	ctx.reqLogger.Info("acl difference found trying to update password")
-	SetClusterResetPassword(&ctx.cluster.Status, "updating acl's")
+	ctx.reqLogger.Info("Difference in ACL found, trying to update password")
+	SetClusterResetPassword(&ctx.cluster.Status, "Updating ACL's")
 	r.CrController.UpdateCRStatus(ctx.cluster)
 
 	if err := r.Checker.CheckRedisNodeNum(ctx.cluster); err == nil {
-		namespace := ctx.cluster.Namespace
+		aclcommands, err := statefulsets.GenerateAclcommands(ctx.reqLogger, r.Client, ctx.cluster, newaclconf, newsecretver)
 
-		matchLabels := getLabels(ctx.cluster)
-		redisClusterPods, err := r.StatefulSetController.GetStatefulSetPodsByLabels(namespace, matchLabels)
 		if err != nil {
-			return err, newsecretver
-		}
-
-		adminPassword, err := statefulsets.GetRedisClusterAdminPassword(r.Client, ctx.cluster, ctx.reqLogger)
-		if err != nil {
-			return err, newsecretver
-		}
-
-		podSet := clusterPods(redisClusterPods.Items)
-		admin, err := newRedisAdmin(podSet, adminPassword, config.RedisConf(), ctx.reqLogger)
-		if err != nil {
-			return err, newsecretver
-		}
-		defer admin.Close()
-		aclcommands, err2 := statefulsets.GenerateAclcommands(ctx.reqLogger, r.Client, ctx.cluster, newaclconf, newsecretver)
-
-		if err2 != nil {
-			return err2, newsecretver
+			return newsecretver, err
 
 		} else {
-			ctx.reqLogger.Info("Printing acl commands to be run:")
-			for key, value := range aclcommands {
-				ctx.reqLogger.Info("acl commands", "user: ", key, "aclcommand: ", value)
+			for _, acl := range aclcommands {
+				for addr, c := range admin.Connections().GetAll() {
+					ctx.reqLogger.Info("Setting ACL for", "address", addr)
+					cmd := strings.Fields(acl)
+					args := make([]interface{}, len(cmd))
+					for i, cm := range cmd {
+						args[i] = cm
+					}
+					resp := c.Do(context, args...)
+					if err := admin.Connections().ValidateResp(context, resp, addr, "unable to set ACL"); err != nil {
+						return nil, err
+					}
+				}
 			}
 		}
 		/*
@@ -384,5 +375,5 @@ func (r *DistributedRedisClusterReconciler) checkandUpadtePassword(client client
 			}
 		*/
 	}
-	return nil, newsecretver
+	return newsecretver, nil
 }

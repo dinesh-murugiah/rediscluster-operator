@@ -1,6 +1,7 @@
 package clustering
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"sort"
@@ -53,7 +54,7 @@ func DispatchMasters(cluster *redisutil.Cluster, nodes redisutil.Nodes, nbMaster
 }
 
 // DispatchSlotToNewMasters used to dispatch Slot to the new master nodes
-func (c *Ctx) DispatchSlotToNewMasters(admin redisutil.IAdmin, newMasterNodes, currentMasterNodes, allMasterNodes redisutil.Nodes) error {
+func (c *Ctx) DispatchSlotToNewMasters(admin redisutil.IAdmin, newMasterNodes, currentMasterNodes, allMasterNodes redisutil.Nodes, ctx context.Context) error {
 	// Calculate the Migration slot information (which slots goes from where to where)
 	migrationSlotInfo, info := c.feedMigInfo(newMasterNodes, currentMasterNodes, allMasterNodes, int(admin.GetHashMaxSlot()+1))
 	c.cluster.ActionsInfo = info
@@ -62,27 +63,27 @@ func (c *Ctx) DispatchSlotToNewMasters(admin redisutil.IAdmin, newMasterNodes, c
 		// There is a need for real error handling here, we must ensure we don't keep a slot in abnormal state
 		if nodesInfo.From == nil {
 			c.log.V(4).Info("1) add slots that having probably been lost during scale down", "destination:", nodesInfo.To.ID, "total:", len(slots), " : ", redisutil.SlotSlice(slots))
-			err := admin.AddSlots(nodesInfo.To.IPPort(), slots)
+			err := admin.AddSlots(ctx, nodesInfo.To.IPPort(), slots)
 			if err != nil {
 				c.log.Error(err, "error during ADDSLOTS")
 				return err
 			}
 		} else {
 			c.log.V(6).Info("1) Send SETSLOT IMPORTING command", "target:", nodesInfo.To.ID, "source-node:", nodesInfo.From.ID, " total:", len(slots), " : ", redisutil.SlotSlice(slots))
-			err := admin.SetSlots(nodesInfo.To.IPPort(), "IMPORTING", slots, nodesInfo.From.ID)
+			err := admin.SetSlots(ctx, nodesInfo.To.IPPort(), "IMPORTING", slots, nodesInfo.From.ID)
 			if err != nil {
 				c.log.Error(err, "error during IMPORTING")
 				return err
 			}
 			c.log.V(6).Info("2) Send SETSLOT MIGRATION command", "target:", nodesInfo.From.ID, "destination-node:", nodesInfo.To.ID, " total:", len(slots), " : ", redisutil.SlotSlice(slots))
-			err = admin.SetSlots(nodesInfo.From.IPPort(), "MIGRATING", slots, nodesInfo.To.ID)
+			err = admin.SetSlots(ctx, nodesInfo.From.IPPort(), "MIGRATING", slots, nodesInfo.To.ID)
 			if err != nil {
 				c.log.Error(err, "error during MIGRATING")
 				return err
 			}
 
 			c.log.V(6).Info("3) Migrate Key")
-			nbMigrated, migerr := admin.MigrateKeys(nodesInfo.From.IPPort(), nodesInfo.To, slots, 10, 30000, true)
+			nbMigrated, migerr := admin.MigrateKeys(ctx, nodesInfo.From.IPPort(), nodesInfo.To, slots, 10, 30000, true)
 			if migerr != nil {
 				c.log.Error(migerr, "error during MIGRATION")
 			} else {
@@ -91,11 +92,11 @@ func (c *Ctx) DispatchSlotToNewMasters(admin redisutil.IAdmin, newMasterNodes, c
 
 			// we absolutly need to do setslot on the node owning the slot first, otherwise in case of manager crash, only the owner may think it is now owning the slot
 			// creating a cluster view discrepency
-			err = admin.SetSlots(nodesInfo.To.IPPort(), "NODE", slots, nodesInfo.To.ID)
+			err = admin.SetSlots(ctx, nodesInfo.To.IPPort(), "NODE", slots, nodesInfo.To.ID)
 			if err != nil {
 				c.log.V(4).Info(fmt.Sprintf("warning during SETSLOT NODE on %s: %v", nodesInfo.To.IPPort(), err))
 			}
-			err = admin.SetSlots(nodesInfo.From.IPPort(), "NODE", slots, nodesInfo.To.ID)
+			err = admin.SetSlots(ctx, nodesInfo.From.IPPort(), "NODE", slots, nodesInfo.To.ID)
 			if err != nil {
 				c.log.V(4).Info(fmt.Sprintf("warning during SETSLOT NODE on %s: %v", nodesInfo.From.IPPort(), err))
 			}
@@ -116,7 +117,7 @@ func (c *Ctx) DispatchSlotToNewMasters(admin redisutil.IAdmin, newMasterNodes, c
 					continue
 				}
 				c.log.V(6).Info("4) Send SETSLOT NODE command", "target:", master.ID, "new owner:", nodesInfo.To.ID, " total:", len(slots), " : ", redisutil.SlotSlice(slots))
-				err = admin.SetSlots(master.IPPort(), "NODE", slots, nodesInfo.To.ID)
+				err = admin.SetSlots(ctx, master.IPPort(), "NODE", slots, nodesInfo.To.ID)
 				if err != nil {
 					c.log.V(4).Info(fmt.Sprintf("warning during SETSLOT NODE on %s: %v", master.IPPort(), err))
 				}

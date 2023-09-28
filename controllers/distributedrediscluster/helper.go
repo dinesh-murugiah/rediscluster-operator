@@ -1,6 +1,7 @@
 package distributedrediscluster
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"time"
@@ -29,7 +30,7 @@ func getLabels(cluster *redisv1alpha1.DistributedRedisCluster) map[string]string
 }
 
 // newRedisAdmin builds and returns new redis.Admin from the list of pods
-func newRedisAdmin(pods []*corev1.Pod, password string, cfg *config.Redis, reqLogger logr.Logger) (redisutil.IAdmin, error) {
+func newRedisAdmin(pods []*corev1.Pod, password string, cfg *config.Redis, reqLogger logr.Logger, ctx context.Context) (redisutil.IAdmin, error) {
 	nodesAddrs := []string{}
 	for _, pod := range pods {
 		redisPort := redisutil.DefaultRedisPort
@@ -51,7 +52,7 @@ func newRedisAdmin(pods []*corev1.Pod, password string, cfg *config.Redis, reqLo
 		Password:           password,
 	}
 
-	return redisutil.NewAdmin(nodesAddrs, &adminConfig, reqLogger), nil
+	return redisutil.NewAdmin(nodesAddrs, &adminConfig, reqLogger, ctx), nil
 }
 
 func newRedisCluster(infos *redisutil.ClusterInfos, cluster *redisv1alpha1.DistributedRedisCluster) (*redisutil.Cluster, redisutil.Nodes, error) {

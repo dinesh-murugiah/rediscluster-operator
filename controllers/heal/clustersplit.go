@@ -1,6 +1,7 @@
 package heal
 
 import (
+	"context"
 	"fmt"
 	"time"
 
@@ -14,12 +15,13 @@ import (
 // FixClusterSplit use to detect and fix Cluster split
 func (c *CheckAndHeal) FixClusterSplit(cluster *redisv1alpha1.DistributedRedisCluster, infos *redisutil.ClusterInfos, admin redisutil.IAdmin, config *config.Redis) (bool, error) {
 	clusters := buildClustersLists(infos)
+	ctx := context.Background()
 
 	if len(clusters) > 1 {
 		if c.DryRun {
 			return true, nil
 		}
-		return true, c.reassignClusters(admin, config, clusters)
+		return true, c.reassignClusters(ctx, admin, config, clusters)
 	}
 	c.Logger.V(3).Info("[Check] No split cluster detected")
 	return false, nil
@@ -27,7 +29,7 @@ func (c *CheckAndHeal) FixClusterSplit(cluster *redisv1alpha1.DistributedRedisCl
 
 type cluster []string
 
-func (c *CheckAndHeal) reassignClusters(admin redisutil.IAdmin, config *config.Redis, clusters []cluster) error {
+func (c *CheckAndHeal) reassignClusters(ctx context.Context, admin redisutil.IAdmin, config *config.Redis, clusters []cluster) error {
 	c.Logger.Info("[Check] Cluster split detected, the Redis manager will recover from the issue, but data may be lost")
 	var errs []error
 	// only one cluster may remain
@@ -38,7 +40,7 @@ func (c *CheckAndHeal) reassignClusters(admin redisutil.IAdmin, config *config.R
 	}
 	c.Logger.Info("[Check] Cluster is elected as main cluster", "Cluster", mainCluster)
 	// reset admin to connect to the correct cluster
-	admin.Connections().ReplaceAll(mainCluster)
+	admin.Connections().ReplaceAll(ctx, mainCluster)
 
 	// reconfigure bad clusters
 	for _, cluster := range badClusters {
@@ -47,19 +49,19 @@ func (c *CheckAndHeal) reassignClusters(admin redisutil.IAdmin, config *config.R
 			&redisutil.AdminOptions{
 				ConnectionTimeout:  time.Duration(config.DialTimeout) * time.Millisecond,
 				RenameCommandsFile: config.GetRenameCommandsFile(),
-			}, c.Logger)
+			}, c.Logger, ctx)
 		for _, nodeAddr := range cluster {
-			if err := clusterAdmin.FlushAndReset(nodeAddr, redisutil.ResetHard); err != nil {
+			if err := clusterAdmin.FlushAndReset(ctx, nodeAddr, redisutil.ResetHard); err != nil {
 				c.Logger.Error(err, "unable to flush the node", "node", nodeAddr)
 				errs = append(errs, err)
 			}
-			if err := admin.AttachNodeToCluster(nodeAddr); err != nil {
+			if err := admin.AttachNodeToCluster(ctx, nodeAddr); err != nil {
 				c.Logger.Error(err, "unable to attach the node", "node", nodeAddr)
 				errs = append(errs, err)
 			}
 
 		}
-		clusterAdmin.Close()
+		clusterAdmin.Close(ctx)
 	}
 
 	return errors.NewAggregate(errs)

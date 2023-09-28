@@ -1,6 +1,8 @@
 package heal
 
 import (
+	"context"
+
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/util/errors"
 
@@ -10,7 +12,7 @@ import (
 
 // FixUntrustedNodes used to remove Nodes that are not trusted by other nodes. It can append when a node
 // are removed from the cluster (with the "forget nodes" command) but try to rejoins the cluster.
-func (c *CheckAndHeal) FixUntrustedNodes(cluster *redisv1alpha1.DistributedRedisCluster, infos *redisutil.ClusterInfos, admin redisutil.IAdmin) (bool, error) {
+func (c *CheckAndHeal) FixUntrustedNodes(cluster *redisv1alpha1.DistributedRedisCluster, infos *redisutil.ClusterInfos, admin redisutil.IAdmin, context context.Context) (bool, error) {
 	untrustedNode := listUntrustedNodes(infos)
 	var errs []error
 	doneAnAction := false
@@ -43,7 +45,7 @@ func (c *CheckAndHeal) FixUntrustedNodes(cluster *redisv1alpha1.DistributedRedis
 		doneAnAction = true
 		if !c.DryRun {
 			c.Logger.Info("[FixUntrustedNodes] try to forget node", "nodeId", id)
-			if err := admin.ForgetNode(id); err != nil {
+			if err := admin.ForgetNode(context, id); err != nil {
 				errs = append(errs, err)
 			}
 		}

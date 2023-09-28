@@ -14,6 +14,14 @@ var migratingSeparator = "->-"
 // Slot represent a Redis Cluster slot
 type Slot uint64
 
+// Define customtype int
+type CustomType int
+
+// ToInt converts a CustomType to an int.
+func (s Slot) ToInt() int {
+	return int(s)
+}
+
 // String string representation of a slot
 func (s Slot) String() string {
 	return strconv.FormatUint(uint64(s), 10)

@@ -220,7 +220,20 @@ func (r *DistributedRedisClusterReconciler) Reconcile(ctx context.Context, reque
 		return reconcile.Result{RequeueAfter: requeueAfter}, nil
 	}
 
-	err, secretver := r.checkandUpadtePassword(r.Client, syncCtx)
+	password, err := statefulsets.GetRedisClusterAdminPassword(r.Client, syncCtx.cluster, reqLogger)
+	if err != nil {
+		return reconcile.Result{}, Kubernetes.Wrap(err, "getClusterPassword")
+	}
+
+	context := context.Background()
+
+	admin, err := newRedisAdmin(syncCtx.pods, password, config.RedisConf(), reqLogger, context)
+	if err != nil {
+		return reconcile.Result{}, Redis.Wrap(err, "newRedisAdmin")
+	}
+	defer admin.Close(context)
+
+	secretver, err := r.checkandUpdatePassword(admin, syncCtx, context)
 	newsecretStatus := instance.Status.DeepCopy()
 	if err != nil {
 		reqLogger.WithValues("err", err).Info("error checking / updating password")
@@ -238,26 +251,18 @@ func (r *DistributedRedisClusterReconciler) Reconcile(ctx context.Context, reque
 		}
 	}
 	r.updateClusterIfNeed(instance, newsecretStatus, reqLogger)
-
-	password, err := statefulsets.GetRedisClusterAdminPassword(r.Client, syncCtx.cluster, reqLogger)
-	if err != nil {
-		return reconcile.Result{}, Kubernetes.Wrap(err, "getClusterPassword")
-	}
 	//reqLogger.WithValues("adminpassword:", password).Info("please check adminpass")
-	admin, err := newRedisAdmin(syncCtx.pods, password, config.RedisConf(), reqLogger)
-	if err != nil {
-		return reconcile.Result{}, Redis.Wrap(err, "newRedisAdmin")
-	}
-	defer admin.Close()
+	// Setting this context for request flow
 
-	clusterInfos, err := admin.GetClusterInfos()
+	clusterInfos, err := admin.GetClusterInfos(context)
+
 	if err != nil {
 		if clusterInfos.Status == redisutil.ClusterInfosPartial {
 			return reconcile.Result{}, Redis.Wrap(err, "GetClusterInfos")
 		}
 	}
 
-	requeue, err := syncCtx.healer.Heal(instance, clusterInfos, admin)
+	requeue, err := syncCtx.healer.Heal(instance, clusterInfos, admin, context)
 	if err != nil {
 		return reconcile.Result{}, Redis.Wrap(err, "Heal")
 	}
@@ -267,7 +272,7 @@ func (r *DistributedRedisClusterReconciler) Reconcile(ctx context.Context, reque
 
 	syncCtx.admin = admin
 	syncCtx.clusterInfos = clusterInfos
-	err = r.waitForClusterJoin(syncCtx)
+	err = r.waitForClusterJoin(syncCtx, context)
 	if err != nil {
 		switch GetType(err) {
 		case Requeue:
@@ -324,7 +329,7 @@ func (r *DistributedRedisClusterReconciler) Reconcile(ctx context.Context, reque
 		return reconcile.Result{}, nil
 	}
 
-	if err := admin.SetConfigIfNeed(instance.Spec.Config); err != nil {
+	if err := admin.SetConfigIfNeed(context, instance.Spec.Config); err != nil {
 		return reconcile.Result{}, Redis.Wrap(err, "SetConfigIfNeed")
 	}
 
@@ -338,7 +343,7 @@ func (r *DistributedRedisClusterReconciler) Reconcile(ctx context.Context, reque
 	instance.Status = *status
 	if needClusterOperation(instance, reqLogger) {
 		reqLogger.Info(">>>>>> clustering")
-		err = r.syncCluster(syncCtx)
+		err = r.syncCluster(syncCtx, context)
 		if err != nil {
 			newStatus := instance.Status.DeepCopy()
 			SetClusterFailed(newStatus, err.Error())
@@ -347,7 +352,7 @@ func (r *DistributedRedisClusterReconciler) Reconcile(ctx context.Context, reque
 		}
 	}
 
-	newClusterInfos, err := admin.GetClusterInfos()
+	newClusterInfos, err := admin.GetClusterInfos(context)
 	if err != nil {
 		if clusterInfos.Status == redisutil.ClusterInfosPartial {
 			return reconcile.Result{}, Redis.Wrap(err, "GetClusterInfos")

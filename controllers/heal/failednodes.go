@@ -1,6 +1,8 @@
 package heal
 
 import (
+	"context"
+
 	"k8s.io/apimachinery/pkg/util/errors"
 
 	redisv1alpha1 "github.com/dinesh-murugiah/rediscluster-operator/api/v1alpha1"
@@ -8,7 +10,7 @@ import (
 )
 
 // FixFailedNodes fix failed nodes: in some cases (cluster without enough master after crash or scale down), some nodes may still know about fail nodes
-func (c *CheckAndHeal) FixFailedNodes(cluster *redisv1alpha1.DistributedRedisCluster, infos *redisutil.ClusterInfos, admin redisutil.IAdmin) (bool, error) {
+func (c *CheckAndHeal) FixFailedNodes(cluster *redisv1alpha1.DistributedRedisCluster, infos *redisutil.ClusterInfos, admin redisutil.IAdmin, context context.Context) (bool, error) {
 	forgetSet := listGhostNodes(cluster, infos)
 	var errs []error
 	doneAnAction := false
@@ -17,7 +19,7 @@ func (c *CheckAndHeal) FixFailedNodes(cluster *redisv1alpha1.DistributedRedisClu
 		c.Logger.Info("[FixFailedNodes] Forgetting failed node, this command might fail, this is not an error", "node", id)
 		if !c.DryRun {
 			c.Logger.Info("[FixFailedNodes] try to forget node", "nodeId", id)
-			if err := admin.ForgetNode(id); err != nil {
+			if err := admin.ForgetNode(context, id); err != nil {
 				errs = append(errs, err)
 			}
 		}

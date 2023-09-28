@@ -132,7 +132,6 @@ func DecodeNodeInfos(input *string, addr string, log logr.Logger) *NodeInfos {
 			}
 		}
 	}
-
 	return infos
 }
 

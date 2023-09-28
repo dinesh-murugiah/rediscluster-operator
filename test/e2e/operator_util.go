@@ -162,17 +162,18 @@ func IsDistributedRedisClusterProperly(f *Framework, drc *redisv1alpha1.Distribu
 			RenameCommandsFile: renameCommandsFile,
 			RenameCommandsPath: renameCommandsPath,
 		}
-		redisAdmin, err := NewRedisAdmin(podList.Items, password, redisconf, logger)
+		ctx := context.Background()
+		redisAdmin, err := NewRedisAdmin(podList.Items, password, redisconf, logger, ctx)
 		if err != nil {
 			f.Logf("NewRedisAdmin err: %s", err)
 			return err
 		}
-		if _, err := redisAdmin.GetClusterInfos(); err != nil {
+		if _, err := redisAdmin.GetClusterInfos(ctx); err != nil {
 			f.Logf("DistributedRedisCluster Cluster nodes: %s", err)
 			return err
 		}
 		for addr, c := range redisAdmin.Connections().GetAll() {
-			configs, err := redisAdmin.GetAllConfig(c, addr)
+			configs, err := redisAdmin.GetAllConfig(ctx, c, addr)
 			if err != nil {
 				f.Logf("DistributedRedisCluster CONFIG GET: %s", err)
 				return err
@@ -198,7 +199,7 @@ func getLabels(cluster *redisv1alpha1.DistributedRedisCluster) map[string]string
 }
 
 // NewRedisAdmin builds and returns new redis.Admin from the list of pods
-func NewRedisAdmin(pods []corev1.Pod, password string, cfg *config.Redis, reqLogger logr.Logger) (redisutil.IAdmin, error) {
+func NewRedisAdmin(pods []corev1.Pod, password string, cfg *config.Redis, reqLogger logr.Logger, ctx context.Context) (redisutil.IAdmin, error) {
 	nodesAddrs := []string{}
 	for _, pod := range pods {
 		redisPort := redisutil.DefaultRedisPort
@@ -220,7 +221,7 @@ func NewRedisAdmin(pods []corev1.Pod, password string, cfg *config.Redis, reqLog
 		Password:           password,
 	}
 
-	return redisutil.NewAdmin(nodesAddrs, &adminConfig, reqLogger), nil
+	return redisutil.NewAdmin(nodesAddrs, &adminConfig, reqLogger, ctx), nil
 }
 
 func getClusterPassword(client client.Client, cluster *redisv1alpha1.DistributedRedisCluster) (string, error) {
