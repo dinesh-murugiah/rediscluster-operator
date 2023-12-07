@@ -62,6 +62,7 @@ type Node struct {
 	ServerStartTime time.Time
 
 	NodeName    string
+	Zonename    string
 	PodName     string
 	StatefulSet string
 }

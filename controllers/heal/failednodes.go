@@ -11,6 +11,7 @@ import (
 
 // FixFailedNodes fix failed nodes: in some cases (cluster without enough master after crash or scale down), some nodes may still know about fail nodes
 func (c *CheckAndHeal) FixFailedNodes(cluster *redisv1alpha1.DistributedRedisCluster, infos *redisutil.ClusterInfos, admin redisutil.IAdmin, context context.Context) (bool, error) {
+
 	forgetSet := listGhostNodes(cluster, infos)
 	var errs []error
 	doneAnAction := false
@@ -32,6 +33,7 @@ func (c *CheckAndHeal) FixFailedNodes(cluster *redisv1alpha1.DistributedRedisClu
 // meaning it is failed, and pod not in kubernetes, or without targetable IP
 func listGhostNodes(cluster *redisv1alpha1.DistributedRedisCluster, infos *redisutil.ClusterInfos) map[string]bool {
 	ghostNodesSet := map[string]bool{}
+	ghostNodesDetect := map[string]int32{}
 	if infos == nil || infos.Infos == nil {
 		return ghostNodesSet
 	}
@@ -39,20 +41,21 @@ func listGhostNodes(cluster *redisv1alpha1.DistributedRedisCluster, infos *redis
 		for _, node := range nodeinfos.Friends {
 			// only forget it when no more part of kubernetes, or if noaddress
 			if node.HasStatus(redisutil.NodeStatusNoAddr) {
-				ghostNodesSet[node.ID] = true
+				ghostNodesDetect[node.ID] += 1
 			}
-			if node.HasStatus(redisutil.NodeStatusFail) || node.HasStatus(redisutil.NodeStatusPFail) {
-				found := false
-				for _, pod := range cluster.Status.Nodes {
-					if pod.ID == node.ID {
-						found = true
-					}
-				}
-				if !found {
-					ghostNodesSet[node.ID] = true
-				}
+			//Pfail is a transient state and is a non majority declaration , this should not be used identifying a node as ghost
+			//if node.HasStatus(redisutil.NodeStatusFail) || node.HasStatus(redisutil.NodeStatusPFail) {
+			if node.HasStatus(redisutil.NodeStatusFail) {
+				ghostNodesDetect[node.ID] += 1
 			}
 		}
 	}
+
+	for ghnodeid, count := range ghostNodesDetect {
+		if count >= ((cluster.Spec.ClusterReplicas+1)*cluster.Spec.MasterSize)/2 {
+			ghostNodesSet[ghnodeid] = true
+		}
+	}
+
 	return ghostNodesSet
 }

@@ -33,6 +33,7 @@ import (
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client/apiutil"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
@@ -110,6 +111,11 @@ func main() {
 	printVersion()
 
 	utils.SetClusterScoped("")
+	defaultNamespaces := make(map[string]cache.Config)
+
+	for _, ns := range utils.namespaceList {
+		defaultNamespaces[ns] = cache.Config{}
+	}
 
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme:                 scheme,
@@ -128,6 +134,13 @@ func main() {
 		// if you are doing or is intended to do any operation such as perform cleanups
 		// after the manager stops then its usage might be unsafe.
 		// LeaderElectionReleaseOnCancel: true,
+		NewCache: func(config *rest.Config, opts cache.Options) (cache.Cache, error) {
+			opts.DefaultNamespaces = map[string]cache.Config{
+				"test-cluster-dinesh": {},
+				"test-cluster-hatest": {},
+			}
+			return cache.New(config, opts)
+		},
 	})
 	if err != nil {
 		setupLog.Error(err, "unable to start manager")
@@ -175,6 +188,9 @@ func main() {
 		StatefulSetController: k8sutil.NewStatefulSetController(redisclusterbackupclient),
 		DirectClient:          redisclusterbackupdrclient,
 		JobController:         k8sutil.NewJobController(redisclusterbackupdrclient),
+		DeploymentController:  k8sutil.NewDeploymentController(redisclusterbackupdrclient),
+		ConfigmapController:   k8sutil.NewConfigMapController(redisclusterbackupdrclient),
+		SecretController:      k8sutil.NewSecretController(redisclusterbackupdrclient),
 		Recorder:              mgr.GetEventRecorderFor("redis-cluster-operator-backup"),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "RedisClusterBackup")

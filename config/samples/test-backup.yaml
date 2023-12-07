@@ -2,16 +2,16 @@
 apiVersion: redis.kun/v1alpha1
 kind: RedisClusterBackup
 metadata:
-  name: example-redisclusterbackup
+  name: distributedrediscluster-test-cluster-1
+  namespace: test-cluster-1
   annotations:
     redis.kun/scope: cluster-scoped
 spec:
-  image: operator/redis-tools:5.0.4
-  # on same namespace
-  redisClusterName: example-distributedrediscluster
-  local:
-    mountPath: /bkp
-    emptyDir:
-      sizeLimit: 1Gi
-  backupCronEnable: true
-  backupSchedule: "*/3 * * * *"
+  redisClusterName: distributedrediscluster-test-cluster-1
+  utilSpec:
+    image: 582763096612.dkr.ecr.us-east-1.amazonaws.com/redisclusterutil:v0.2-multiarch
+    s3Bucket: "redis-logs-bucket-staging-us-east-1"
+    startupCommand: "/usr/local/bin/redisclusterutil"
+    imagePullPolicy: "Always"
+    replicas: 1
+    terminationGracePeriod: 30

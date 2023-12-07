@@ -23,13 +23,19 @@ const (
 	redisStorageVolumeName      = "redis-data"
 	redisRestoreLocalVolumeName = "redis-local"
 	redisServerName             = "redis"
+	zonenameTopologyKey         = "topology.kubernetes.io/zone"
 	hostnameTopologyKey         = "kubernetes.io/hostname"
 	ExporterContainerName       = "exporter"
 
 	graceTime = 30
 
-	configMapVolumeName = "conf"
-	aclConfigMapVolName = "acl"
+	configMapVolumeName       = "conf"
+	aclConfigMapVolName       = "acl"
+	utilConfigMapVolName      = "utilconf"
+	readinessConfigmapVolName = "readyconf"
+	livenessConfigmapVolName  = "liveconf"
+	startupConfigmapVolName   = "startupconf"
+	shutdownConfigmapVolName  = "shutdownconf"
 )
 
 // NewStatefulSetForCR creates a new StatefulSet for the given Cluster.
@@ -45,6 +51,12 @@ func NewStatefulSetForCR(cluster *redisv1alpha1.DistributedRedisCluster, ssName,
 	} else {
 		password = redisPassword(cluster)
 	}
+	terminationGracePeriodSeconds := cluster.Spec.TerminationGracePeriod
+	if *cluster.Spec.TerminationGracePeriod > int64(0) {
+		terminationGracePeriodSeconds = cluster.Spec.TerminationGracePeriod
+	} else {
+		*terminationGracePeriodSeconds = int64(30) //take default if not provided
+	}
 
 	ss := &appsv1.StatefulSet{
 		ObjectMeta: metav1.ObjectMeta{
@@ -57,7 +69,7 @@ func NewStatefulSetForCR(cluster *redisv1alpha1.DistributedRedisCluster, ssName,
 			ServiceName: svcName,
 			Replicas:    &size,
 			UpdateStrategy: appsv1.StatefulSetUpdateStrategy{
-				Type: appsv1.RollingUpdateStatefulSetStrategyType,
+				Type: appsv1.OnDeleteStatefulSetStrategyType,
 			},
 			Selector: &metav1.LabelSelector{
 				MatchLabels: labels,
@@ -68,15 +80,17 @@ func NewStatefulSetForCR(cluster *redisv1alpha1.DistributedRedisCluster, ssName,
 					Annotations: cluster.Spec.Annotations,
 				},
 				Spec: corev1.PodSpec{
-					ImagePullSecrets: cluster.Spec.ImagePullSecrets,
-					Affinity:         getAffinity(cluster, labels),
-					Tolerations:      spec.ToleRations,
-					SecurityContext:  spec.SecurityContext,
-					NodeSelector:     cluster.Spec.NodeSelector,
+					ImagePullSecrets:          cluster.Spec.ImagePullSecrets,
+					Affinity:                  getAffinity(cluster, labels),
+					Tolerations:               spec.ToleRations,
+					SecurityContext:           spec.SecurityContext,
+					NodeSelector:              cluster.Spec.NodeSelector,
+					TopologySpreadConstraints: getTopolgyspreadConstraints(cluster, ssName),
 					Containers: []corev1.Container{
 						redisServerContainer(cluster, password),
 					},
-					Volumes: volumes,
+					Volumes:                       volumes,
+					TerminationGracePeriodSeconds: terminationGracePeriodSeconds,
 				},
 			},
 		},
@@ -92,7 +106,7 @@ func NewStatefulSetForCR(cluster *redisv1alpha1.DistributedRedisCluster, ssName,
 		}
 	}
 	if spec.Monitor != nil {
-		ss.Spec.Template.Spec.Containers = append(ss.Spec.Template.Spec.Containers, redisExporterContainer(cluster, password))
+		ss.Spec.Template.Spec.Containers = append(ss.Spec.Template.Spec.Containers, redisMonitorContainers(cluster, password)...)
 	}
 
 	if spec.InitContainers != nil {
@@ -116,12 +130,33 @@ func NewStatefulSetForCR(cluster *redisv1alpha1.DistributedRedisCluster, ssName,
 	return ss, nil
 }
 
+func getTopolgyspreadConstraints(cluster *redisv1alpha1.DistributedRedisCluster, ssname string) []corev1.TopologySpreadConstraint {
+	return []corev1.TopologySpreadConstraint{
+		{
+			MaxSkew:           1,
+			TopologyKey:       zonenameTopologyKey,
+			WhenUnsatisfiable: corev1.DoNotSchedule,
+			LabelSelector: &metav1.LabelSelector{
+				MatchLabels: map[string]string{"statefulSet": ssname},
+			},
+		},
+		{
+			MaxSkew:           1,
+			TopologyKey:       hostnameTopologyKey,
+			WhenUnsatisfiable: corev1.DoNotSchedule,
+			LabelSelector: &metav1.LabelSelector{
+				MatchLabels: map[string]string{"statefulSet": ssname},
+			},
+		},
+	}
+}
+
 func getAffinity(cluster *redisv1alpha1.DistributedRedisCluster, labels map[string]string) *corev1.Affinity {
 	affinity := cluster.Spec.Affinity
 	if affinity != nil {
 		return affinity
 	}
-
+	// pod  anti affinity for every pod in a redis cluster on node level (preferred weighted anti-affinity for every pod, mandatady on STS level)
 	if cluster.Spec.RequiredAntiAffinity {
 		return &corev1.Affinity{
 			PodAntiAffinity: &corev1.PodAntiAffinity{
@@ -147,17 +182,14 @@ func getAffinity(cluster *redisv1alpha1.DistributedRedisCluster, labels map[stri
 			},
 		}
 	}
-	// return a SOFT anti-affinity by default
+	// return pod  anti-affinity on node level per STS by default
 	return &corev1.Affinity{
 		PodAntiAffinity: &corev1.PodAntiAffinity{
-			PreferredDuringSchedulingIgnoredDuringExecution: []corev1.WeightedPodAffinityTerm{
+			RequiredDuringSchedulingIgnoredDuringExecution: []corev1.PodAffinityTerm{
 				{
-					Weight: 100,
-					PodAffinityTerm: corev1.PodAffinityTerm{
-						TopologyKey: hostnameTopologyKey,
-						LabelSelector: &metav1.LabelSelector{
-							MatchLabels: map[string]string{redisv1alpha1.LabelClusterName: cluster.Name},
-						},
+					TopologyKey: hostnameTopologyKey,
+					LabelSelector: &metav1.LabelSelector{
+						MatchLabels: labels,
 					},
 				},
 			},
@@ -203,7 +235,8 @@ func getRedisCommand(cluster *redisv1alpha1.DistributedRedisCluster, password *c
 	}
 	if password != nil {
 		cmd = append(cmd, "--requirepass no",
-			fmt.Sprintf("--masterauth '$(%s)'", redisv1alpha1.PasswordENV))
+			fmt.Sprintf("--masterauth '$(%s)'", redisv1alpha1.PasswordENV),
+			"-- masteruser admin")
 	}
 
 	renameCmdMap := utils.BuildCommandReplaceMapping(config.RedisConf().GetRenameCommandsFile(), log)
@@ -245,8 +278,6 @@ func mergeRenameCmds(userCmds []string, systemRenameCmdMap map[string]string) []
 }
 
 func redisServerContainer(cluster *redisv1alpha1.DistributedRedisCluster, password *corev1.EnvVar) corev1.Container {
-	probeArg := "redis-cli -h $(hostname) ping"
-
 	container := corev1.Container{
 		Name:            redisServerName,
 		Image:           cluster.Spec.Image,
@@ -264,34 +295,11 @@ func redisServerContainer(cluster *redisv1alpha1.DistributedRedisCluster, passwo
 				Protocol:      corev1.ProtocolTCP,
 			},
 		},
-		VolumeMounts: volumeMounts(),
-		Command:      getRedisCommand(cluster, password),
-		LivenessProbe: &corev1.Probe{
-			InitialDelaySeconds: graceTime,
-			TimeoutSeconds:      5,
-			ProbeHandler: corev1.ProbeHandler{
-				Exec: &corev1.ExecAction{
-					Command: []string{
-						"sh",
-						"-c",
-						probeArg,
-					},
-				},
-			},
-		},
-		ReadinessProbe: &corev1.Probe{
-			InitialDelaySeconds: graceTime,
-			TimeoutSeconds:      5,
-			ProbeHandler: corev1.ProbeHandler{
-				Exec: &corev1.ExecAction{
-					Command: []string{
-						"sh",
-						"-c",
-						probeArg,
-					},
-				},
-			},
-		},
+		VolumeMounts:   volumeMounts(),
+		Command:        getRedisCommand(cluster, password),
+		LivenessProbe:  &cluster.Spec.CustomLivenessProbe,
+		ReadinessProbe: &cluster.Spec.CustomReadinessProbe,
+		StartupProbe:   &cluster.Spec.CustomStartupProbe,
 		Env: []corev1.EnvVar{
 			{
 				Name: "POD_IP",
@@ -312,7 +320,7 @@ func redisServerContainer(cluster *redisv1alpha1.DistributedRedisCluster, passwo
 			},
 			PreStop: &corev1.LifecycleHandler{
 				Exec: &corev1.ExecAction{
-					Command: []string{"/bin/sh", "/conf/shutdown.sh"},
+					Command: []string{"/bin/sh", "/shutdown/shutdown.sh"},
 				},
 			},
 		},
@@ -327,38 +335,40 @@ func redisServerContainer(cluster *redisv1alpha1.DistributedRedisCluster, passwo
 	return container
 }
 
-func redisExporterContainer(cluster *redisv1alpha1.DistributedRedisCluster, password *corev1.EnvVar) corev1.Container {
-	container := corev1.Container{
-		Name: ExporterContainerName,
-		Args: append([]string{
-			fmt.Sprintf("--web.listen-address=:%v", cluster.Spec.Monitor.Prometheus.Port),
-			fmt.Sprintf("--web.telemetry-path=%v", redisv1alpha1.PrometheusExporterTelemetryPath),
-		}, cluster.Spec.Monitor.Args...),
-		Image:           cluster.Spec.Monitor.Image,
-		ImagePullPolicy: corev1.PullAlways,
-		Ports: []corev1.ContainerPort{
-			{
-				Name:          "prom-http",
-				Protocol:      corev1.ProtocolTCP,
-				ContainerPort: cluster.Spec.Monitor.Prometheus.Port,
+func redisMonitorContainers(cluster *redisv1alpha1.DistributedRedisCluster, password *corev1.EnvVar) []corev1.Container {
+	var containers []corev1.Container
+	for _, c := range *cluster.Spec.Monitor {
+		container := corev1.Container{
+			Name:            c.Name,
+			Args:            c.Args,
+			Image:           c.Image,
+			Command:         c.Command,
+			ImagePullPolicy: corev1.PullIfNotPresent,
+			Ports: []corev1.ContainerPort{
+				{
+					Name:          c.Prometheus.Name,
+					Protocol:      corev1.ProtocolTCP,
+					ContainerPort: c.Prometheus.Port,
+				},
 			},
-		},
-		Env:             cluster.Spec.Monitor.Env,
-		Resources:       cluster.Spec.Monitor.Resources,
-		SecurityContext: cluster.Spec.Monitor.SecurityContext,
-	}
-	if password != nil {
-		container.Env = append(container.Env, *password)
+			Env:             c.Env,
+			Resources:       c.Resources,
+			SecurityContext: c.SecurityContext,
+		}
+		if password != nil {
+			container.Env = append(container.Env, *password)
+		}
+
+		container.Env = customContainerEnv(container.Env, cluster.Spec.Env)
+		containers = append(containers, container)
 	}
 
-	container.Env = customContainerEnv(container.Env, cluster.Spec.Env)
-
-	return container
+	return containers
 }
 
 func redisRestoreInitContainer(cluster *redisv1alpha1.DistributedRedisCluster, password *corev1.EnvVar) (corev1.Container, error) {
 	//Dinesh Todo This flow Needs FIX ####, commented out below to fix status fileds
-	err := fmt.Errorf("Restore Not supported yet")
+	err := fmt.Errorf("restore Not supported yet")
 	return corev1.Container{}, err
 	/*
 		backup := cluster.Status.Restore.Backup
@@ -484,6 +494,26 @@ func volumeMounts() []corev1.VolumeMount {
 			Name:      aclConfigMapVolName,
 			MountPath: "/acl",
 		},
+		{
+			Name:      utilConfigMapVolName,
+			MountPath: "/config",
+		},
+		{
+			Name:      livenessConfigmapVolName,
+			MountPath: "/liveprobe",
+		},
+		{
+			Name:      readinessConfigmapVolName,
+			MountPath: "/readyprobe",
+		},
+		{
+			Name:      startupConfigmapVolName,
+			MountPath: "/startupprobe",
+		},
+		{
+			Name:      shutdownConfigmapVolName,
+			MountPath: "/shutdown",
+		},
 	}
 }
 
@@ -525,6 +555,61 @@ func redisVolumes(cluster *redisv1alpha1.DistributedRedisCluster) []corev1.Volum
 				ConfigMap: &corev1.ConfigMapVolumeSource{
 					LocalObjectReference: corev1.LocalObjectReference{
 						Name: configmaps.AclConfigMapName(cluster.Name),
+					},
+					DefaultMode: &executeMode,
+				},
+			},
+		},
+		{
+			Name: utilConfigMapVolName,
+			VolumeSource: corev1.VolumeSource{
+				ConfigMap: &corev1.ConfigMapVolumeSource{
+					LocalObjectReference: corev1.LocalObjectReference{
+						Name: cluster.Spec.UtilConfig,
+					},
+					DefaultMode: &executeMode,
+				},
+			},
+		},
+		{
+			Name: readinessConfigmapVolName,
+			VolumeSource: corev1.VolumeSource{
+				ConfigMap: &corev1.ConfigMapVolumeSource{
+					LocalObjectReference: corev1.LocalObjectReference{
+						Name: "readiness-data",
+					},
+					DefaultMode: &executeMode,
+				},
+			},
+		},
+		{
+			Name: livenessConfigmapVolName,
+			VolumeSource: corev1.VolumeSource{
+				ConfigMap: &corev1.ConfigMapVolumeSource{
+					LocalObjectReference: corev1.LocalObjectReference{
+						Name: "liveness-data",
+					},
+					DefaultMode: &executeMode,
+				},
+			},
+		},
+		{
+			Name: startupConfigmapVolName,
+			VolumeSource: corev1.VolumeSource{
+				ConfigMap: &corev1.ConfigMapVolumeSource{
+					LocalObjectReference: corev1.LocalObjectReference{
+						Name: "startup-data",
+					},
+					DefaultMode: &executeMode,
+				},
+			},
+		},
+		{
+			Name: shutdownConfigmapVolName,
+			VolumeSource: corev1.VolumeSource{
+				ConfigMap: &corev1.ConfigMapVolumeSource{
+					LocalObjectReference: corev1.LocalObjectReference{
+						Name: "shutdown-data",
 					},
 					DefaultMode: &executeMode,
 				},

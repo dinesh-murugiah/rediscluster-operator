@@ -2,7 +2,7 @@ package v1alpha1
 
 import (
 	"fmt"
-	"path/filepath"
+	//	"path/filepath"
 
 	"github.com/go-logr/logr"
 	v1 "k8s.io/api/core/v1"
@@ -45,30 +45,6 @@ func (in *DistributedRedisCluster) DefaultSpec(log logr.Logger) bool {
 		update = true
 	}
 
-	mon := in.Spec.Monitor
-	if mon != nil {
-		if mon.Image == "" {
-			mon.Image = defaultMonitorImage
-			update = true
-		}
-
-		if mon.Prometheus == nil {
-			mon.Prometheus = &PrometheusSpec{}
-			update = true
-		}
-		if mon.Prometheus.Port == 0 {
-			mon.Prometheus.Port = PrometheusExporterPortNumber
-			update = true
-		}
-		if in.Spec.Annotations == nil {
-			in.Spec.Annotations = make(map[string]string)
-			update = true
-		}
-
-		in.Spec.Annotations["prometheus.io/scrape"] = "true"
-		in.Spec.Annotations["prometheus.io/path"] = PrometheusExporterTelemetryPath
-		in.Spec.Annotations["prometheus.io/port"] = fmt.Sprintf("%d", mon.Prometheus.Port)
-	}
 	return update
 }
 
@@ -125,34 +101,34 @@ func (in *RedisClusterBackup) Validate() error {
 		return fmt.Errorf("bakcup [RedisClusterName] is missing")
 	}
 	// BucketName can't be empty
-	if in.Spec.S3 == nil && in.Spec.GCS == nil && in.Spec.Azure == nil && in.Spec.Swift == nil && in.Spec.Local == nil {
-		return fmt.Errorf("no storage provider is configured")
-	}
+	// if in.Spec.S3 == nil && in.Spec.GCS == nil && in.Spec.Azure == nil && in.Spec.Swift == nil && in.Spec.Local == nil {
+	// 	return fmt.Errorf("no storage provider is configured")
+	// }
 
-	if in.Spec.Azure != nil || in.Spec.Swift != nil {
-		if in.Spec.StorageSecretName == "" {
-			return fmt.Errorf("bakcup [SecretName] is missing")
-		}
-	}
+	// if in.Spec.Azure != nil || in.Spec.Swift != nil {
+	// 	if in.Spec.StorageSecretName == "" {
+	// 		return fmt.Errorf("bakcup [SecretName] is missing")
+	// 	}
+	// }
 	return nil
 }
 
-func (in *RedisClusterBackup) RemotePath() (string, error) {
-	spec := in.Spec.Backend
-	timePrefix := in.Status.StartTime.Format("20060102150405")
-	if spec.S3 != nil {
-		return filepath.Join(spec.S3.Prefix, DatabaseNamePrefix, in.Namespace, in.Spec.RedisClusterName, timePrefix), nil
-	} else if spec.GCS != nil {
-		return filepath.Join(spec.GCS.Prefix, DatabaseNamePrefix, in.Namespace, in.Spec.RedisClusterName, timePrefix), nil
-	} else if spec.Azure != nil {
-		return filepath.Join(spec.Azure.Prefix, DatabaseNamePrefix, in.Namespace, in.Spec.RedisClusterName, timePrefix), nil
-	} else if spec.Local != nil {
-		return filepath.Join(DatabaseNamePrefix, in.Namespace, in.Spec.RedisClusterName, timePrefix), nil
-	} else if spec.Swift != nil {
-		return filepath.Join(spec.Swift.Prefix, DatabaseNamePrefix, in.Namespace, in.Spec.RedisClusterName, timePrefix), nil
-	}
-	return "", fmt.Errorf("no storage provider is configured")
-}
+// func (in *RedisClusterBackup) RemotePath() (string, error) {
+// 	spec := in.Spec.Backend
+// 	timePrefix := in.Status.StartTime.Format("20060102150405")
+// 	if spec.S3 != nil {
+// 		return filepath.Join(spec.S3.Prefix, DatabaseNamePrefix, in.Namespace, in.Spec.RedisClusterName, timePrefix), nil
+// 	} else if spec.GCS != nil {
+// 		return filepath.Join(spec.GCS.Prefix, DatabaseNamePrefix, in.Namespace, in.Spec.RedisClusterName, timePrefix), nil
+// 	} else if spec.Azure != nil {
+// 		return filepath.Join(spec.Azure.Prefix, DatabaseNamePrefix, in.Namespace, in.Spec.RedisClusterName, timePrefix), nil
+// 	} else if spec.Local != nil {
+// 		return filepath.Join(DatabaseNamePrefix, in.Namespace, in.Spec.RedisClusterName, timePrefix), nil
+// 	} else if spec.Swift != nil {
+// 		return filepath.Join(spec.Swift.Prefix, DatabaseNamePrefix, in.Namespace, in.Spec.RedisClusterName, timePrefix), nil
+// 	}
+// 	return "", fmt.Errorf("no storage provider is configured")
+// }
 
 func (in *RedisClusterBackup) RCloneSecretName() string {
 	return fmt.Sprintf("rcloneconfig-%v", in.Name)
@@ -162,6 +138,6 @@ func (in *RedisClusterBackup) JobName() string {
 	return fmt.Sprintf("redisbackup-%v", in.Name)
 }
 
-func (in *RedisClusterBackup) IsRefLocalPVC() bool {
-	return in.Spec.Local != nil && in.Spec.Local.PersistentVolumeClaim != nil
-}
+// func (in *RedisClusterBackup) IsRefLocalPVC() bool {
+// 	return in.Spec.Local != nil && in.Spec.Local.PersistentVolumeClaim != nil
+// }

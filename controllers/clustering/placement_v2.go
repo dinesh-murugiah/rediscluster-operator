@@ -2,6 +2,7 @@ package clustering
 
 import (
 	"fmt"
+	"sort"
 
 	"github.com/go-logr/logr"
 
@@ -20,9 +21,11 @@ type Ctx struct {
 	newMastersBySts   map[string]*redisutil.Node
 	slavesByMaster    map[string]redisutil.Nodes
 	bestEffort        bool
+	haconfig          *redisv1alpha1.HAspec
+	hastatus          redisv1alpha1.HaStatus
 }
 
-func NewCtx(cluster *redisutil.Cluster, nodes redisutil.Nodes, masterNum int32, clusterName string, log logr.Logger) *Ctx {
+func NewCtx(haconf *redisv1alpha1.HAspec, cluster *redisutil.Cluster, nodes redisutil.Nodes, masterNum int32, clusterName string, log logr.Logger) *Ctx {
 	ctx := &Ctx{
 		log:               log,
 		expectedMasterNum: int(masterNum),
@@ -30,6 +33,8 @@ func NewCtx(cluster *redisutil.Cluster, nodes redisutil.Nodes, masterNum int32, 
 		cluster:           cluster,
 		slavesByMaster:    make(map[string]redisutil.Nodes),
 		newMastersBySts:   make(map[string]*redisutil.Node),
+		haconfig:          haconf,
+		hastatus:          cluster.HaStatus,
 	}
 	ctx.nodes = ctx.sortRedisNodeByStatefulSet(nodes)
 	return ctx
@@ -69,7 +74,17 @@ func (c *Ctx) DispatchMasters() error {
 		}
 		currentMasterNodes := nodes.FilterByFunc(redisutil.IsMasterWithSlot)
 		if len(currentMasterNodes) == 0 {
-			master := c.PlaceMasters(stsName)
+			var master *redisutil.Node = nil
+			if c.haconfig.HaEnabled && c.hastatus == redisv1alpha1.HaStatusCreating {
+				master = c.PlaceMastersHA(i, stsName, c.haconfig)
+			} else {
+				master = c.PlaceMasters(stsName)
+			}
+			if master == nil {
+				return fmt.Errorf("unable to place master for statefulset %s", stsName)
+			} else {
+				c.log.Info("place master", "statefulSet", stsName, "podname", master.PodName, "ip", master.IP, "node", master.NodeName, "zone", master.Zonename)
+			}
 			c.newMastersBySts[stsName] = master
 		} else if len(currentMasterNodes) == 1 {
 			c.newMastersBySts[stsName] = currentMasterNodes[0]
@@ -80,6 +95,24 @@ func (c *Ctx) DispatchMasters() error {
 	}
 
 	return nil
+}
+
+func (c *Ctx) PlaceMastersHA(stsindex int, ssName string, haconf *redisv1alpha1.HAspec) *redisutil.Node {
+	nodes := c.nodes[ssName]
+	zoneoffset := (stsindex % len(haconf.ZonesInfo))
+	zones := make([]string, 0, len(haconf.ZonesInfo))
+	for zone := range haconf.ZonesInfo {
+		zones = append(zones, zone)
+	}
+	sort.Strings(zones)
+	zonename := zones[zoneoffset]
+	for _, node := range nodes {
+		if node.Zonename == zonename {
+			return node
+		}
+	}
+	return nil
+
 }
 
 func (c *Ctx) PlaceMasters(ssName string) *redisutil.Node {

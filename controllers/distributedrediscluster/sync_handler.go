@@ -3,10 +3,12 @@ package distributedrediscluster
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/go-logr/logr"
+	v1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 
 	redisv1alpha1 "github.com/dinesh-murugiah/rediscluster-operator/api/v1alpha1"
@@ -30,13 +32,13 @@ type syncContext struct {
 	reqLogger    logr.Logger
 }
 
-func (r *DistributedRedisClusterReconciler) ensureCluster(ctx *syncContext) error {
+func (r *DistributedRedisClusterReconciler) ensureCluster(ctx *syncContext) (bool, error) {
 	cluster := ctx.cluster
 	if err := r.validateAndSetDefault(cluster, ctx.reqLogger); err != nil {
 		if k8sutil.IsRequestRetryable(err) {
-			return Kubernetes.Wrap(err, "Validate")
+			return false, Kubernetes.Wrap(err, "Validate")
 		}
-		return StopRetry.Wrap(err, "stop retry")
+		return false, StopRetry.Wrap(err, "stop retry")
 	}
 
 	// Redis only load db from append only file when AOF ON, because of
@@ -46,43 +48,30 @@ func (r *DistributedRedisClusterReconciler) ensureCluster(ctx *syncContext) erro
 	labels := getLabels(cluster)
 	if err, crdeferr := r.Ensurer.EnsureRedisConfigMap(cluster, labels); err != nil {
 		if crdeferr {
-			return StopRetry.Wrap(err, "AdminSecretMissing")
+			return false, StopRetry.Wrap(err, "AdminSecretMissing")
 		} else {
-			return Kubernetes.Wrap(err, "EnsureRedisConfigMap")
+			return false, Kubernetes.Wrap(err, "EnsureRedisConfigMap")
 		}
 	}
 
-	if updated, err := r.Ensurer.EnsureRedisStatefulsets(cluster, labels); err != nil {
+	isSTScreated, err := r.Ensurer.EnsureRedisStatefulsets(cluster, labels)
+	if err != nil {
 		ctx.reqLogger.Error(err, "EnsureRedisStatefulSets")
-		return Kubernetes.Wrap(err, "EnsureRedisStatefulSets")
-	} else if updated {
-		// update cluster status = RollingUpdate immediately when cluster's image or resource or password changed
-		SetClusterUpdating(&cluster.Status, "cluster spec updated")
-		r.CrController.UpdateCRStatus(cluster)
-		waiter := &waitStatefulSetUpdating{
-			name:                  "waitStatefulSetUpdating",
-			timeout:               30 * time.Second * time.Duration(cluster.Spec.ClusterReplicas+2),
-			tick:                  5 * time.Second,
-			statefulSetController: r.StatefulSetController,
-			cluster:               cluster,
-		}
-		if err := waiting(waiter, ctx.reqLogger); err != nil {
-			return err
-		}
+		return false, Kubernetes.Wrap(err, "EnsureRedisStatefulSets")
 	}
-	if err := r.Ensurer.EnsureRedisHeadLessSvcs(cluster, labels); err != nil {
-		return Kubernetes.Wrap(err, "EnsureRedisHeadLessSvcs")
+	if err1 := r.Ensurer.EnsureClusterShardsHeadLessSvcs(cluster, labels); err1 != nil {
+		return isSTScreated, Kubernetes.Wrap(err, "EnsureRedisHeadLessSvcs")
 	}
-	if err := r.Ensurer.EnsureRedisSvc(cluster, labels); err != nil {
-		return Kubernetes.Wrap(err, "EnsureRedisSvc")
+	if err2 := r.Ensurer.EnsureClusterHeadLessSvc(cluster, labels); err2 != nil {
+		return isSTScreated, Kubernetes.Wrap(err, "EnsureRedisSvc")
 	}
-	if err := r.Ensurer.EnsureRedisRCloneSecret(cluster, labels); err != nil {
+	if err3 := r.Ensurer.EnsureRedisRCloneSecret(cluster, labels); err3 != nil {
 		if k8sutil.IsRequestRetryable(err) {
-			return Kubernetes.Wrap(err, "EnsureRedisRCloneSecret")
+			return isSTScreated, Kubernetes.Wrap(err, "EnsureRedisRCloneSecret")
 		}
-		return StopRetry.Wrap(err, "stop retry")
+		return isSTScreated, StopRetry.Wrap(err, "stop retry")
 	}
-	return nil
+	return isSTScreated, nil
 }
 
 func (r *DistributedRedisClusterReconciler) waitPodReady(ctx *syncContext) error {
@@ -100,9 +89,31 @@ func (r *DistributedRedisClusterReconciler) validateAndSetDefault(cluster *redis
 	var update bool
 	var err error
 
+	// TODO: DR-1173 Move this to validation webhook
+	if cluster.Spec.HaConfig == nil {
+		err = fmt.Errorf("ha config expected missing")
+		return err
+
+	} else {
+		if cluster.Spec.HaConfig.HaEnabled {
+			if cluster.Spec.HaConfig.ZonesInfo == nil || (len(cluster.Spec.HaConfig.ZonesInfo) < 1 || len(cluster.Spec.HaConfig.ZonesInfo) < 3) {
+				err = fmt.Errorf("haspec missing zone info")
+				return err
+			}
+		}
+	}
+
+	// TODO: DR-1173 Move this to validation webhook
+	for _, container := range *cluster.Spec.Monitor {
+		if container.Image == "" || container.Prometheus == nil || container.Prometheus.Port == 0 {
+			err = fmt.Errorf("required fields missing for monitor")
+			return err
+		}
+	}
+
 	if cluster.IsRestoreFromBackup() && cluster.ShouldInitRestorePhase() {
 		//Dinesh Todo This flow Needs FIX ####, commented out below to fix status fileds
-		err = fmt.Errorf("Restore Not supported yet")
+		err = fmt.Errorf("restore Not supported yet")
 		return err
 		/*
 			reqLogger.Error("force appendonly = no when do restore")
@@ -201,11 +212,11 @@ func (r *DistributedRedisClusterReconciler) syncCluster(ctx *syncContext, contex
 	admin := ctx.admin
 	clusterInfos := ctx.clusterInfos
 	expectMasterNum := cluster.Spec.MasterSize
-	rCluster, nodes, err := newRedisCluster(clusterInfos, cluster)
+	rCluster, nodes, err := newRedisCluster(clusterInfos, cluster, ctx.reqLogger)
 	if err != nil {
 		return Cluster.Wrap(err, "newRedisCluster")
 	}
-	clusterCtx := clustering.NewCtx(rCluster, nodes, cluster.Spec.MasterSize, cluster.Name, ctx.reqLogger)
+	clusterCtx := clustering.NewCtx(cluster.Spec.HaConfig, rCluster, nodes, cluster.Spec.MasterSize, cluster.Name, ctx.reqLogger)
 	if err := clusterCtx.DispatchMasters(); err != nil {
 		return Cluster.Wrap(err, "DispatchMasters")
 	}
@@ -299,11 +310,11 @@ func (r *DistributedRedisClusterReconciler) scalingDown(ctx *syncContext, curren
 		if err := r.ServiceController.DeleteServiceByName(cluster.Namespace, svcName); err != nil {
 			ctx.reqLogger.Error(err, "DeleteServiceByName", "service", svcName)
 		}
-		/*
-			if err := r.pdbController.DeletePodDisruptionBudgetByName(cluster.Namespace, stsName); err != nil {
-				ctx.reqLogger.Error(err, "DeletePodDisruptionBudgetByName", "pdb", stsName)
-			}
-		*/
+
+		if err := r.PdbController.DeletePodDisruptionBudgetByName(cluster.Namespace, stsName); err != nil {
+			ctx.reqLogger.Error(err, "DeletePodDisruptionBudgetByName", "pdb", stsName)
+		}
+
 		if err := r.PvcController.DeletePvcByLabels(cluster.Namespace, sts.Labels); err != nil {
 			ctx.reqLogger.Error(err, "DeletePvcByLabels", "labels", sts.Labels)
 		}
@@ -376,4 +387,154 @@ func (r *DistributedRedisClusterReconciler) checkandUpdatePassword(admin redisut
 		*/
 	}
 	return newsecretver, nil
+}
+
+func (r *DistributedRedisClusterReconciler) checkandUpdatePods(admin redisutil.IAdmin, ctx *syncContext, context context.Context) (bool, error) {
+	var ok, updated bool = false, false
+	master_ips, slave_ips, err := r.getRedisIPsByRole(admin, ctx.reqLogger)
+	if err != nil {
+		return false, err
+	}
+	ssUR, err := r.getStatefulsetUpdatedRevision(ctx)
+	for _, slave_ip := range slave_ips {
+		ok, err = r.IsSlaveReady(slave_ip, admin, context)
+		if err != nil {
+			return false, err
+		}
+		if ok {
+			updated, err = r.updatePodIfNeeded(slave_ip, ctx.pods, ssUR, ctx.reqLogger, ctx.cluster.Namespace, string(redisv1alpha1.RedisClusterNodeRoleSlave))
+			if err != nil {
+				return false, err
+			}
+		}
+	}
+	if updated {
+		waiter := &waitStatefulSetUpdating{
+			name:                  "waitStatefulSetUpdating",
+			timeout:               30 * time.Second * time.Duration(ctx.cluster.Spec.ClusterReplicas),
+			tick:                  5 * time.Second,
+			statefulSetController: r.StatefulSetController,
+			cluster:               ctx.cluster,
+		}
+		if err = waiting(waiter, ctx.reqLogger); err != nil {
+			return false, err
+		}
+		ctx.reqLogger.Info("Slaves are updated")
+		return true, err
+	}
+	if !updated && !ok {
+		ctx.reqLogger.Info("Slaves are not ready")
+		return true, err
+	}
+	if ok {
+		for _, master_ip := range master_ips {
+			updated, err = r.updatePodIfNeeded(master_ip, ctx.pods, ssUR, ctx.reqLogger, ctx.cluster.Namespace, string(redisv1alpha1.RedisClusterNodeRoleMaster))
+			if updated {
+				waiter := &waitStatefulSetUpdating{
+					name:                  "waitStatefulSetUpdating",
+					timeout:               30 * time.Second * time.Duration(ctx.cluster.Spec.ClusterReplicas),
+					tick:                  5 * time.Second,
+					statefulSetController: r.StatefulSetController,
+					cluster:               ctx.cluster,
+				}
+				if err := waiting(waiter, ctx.reqLogger); err != nil {
+					ctx.reqLogger.Info("Im inside wait loop error")
+					return false, err
+				}
+				ctx.reqLogger.Info("Master is updated")
+				return true, err
+			}
+		}
+	}
+	return false, err
+}
+
+func (r *DistributedRedisClusterReconciler) IsSlaveReady(ip string, admin redisutil.IAdmin, ctx context.Context) (bool, error) {
+	c, err := admin.Connections().Get(ctx, ip)
+	if err != nil {
+		return false, err
+	}
+	info, err := c.Info(context.TODO(), "replication").Result()
+	if err != nil {
+		return false, err
+	}
+
+	ok := !strings.Contains(info, string(redisv1alpha1.RedisSyncing)) &&
+		!strings.Contains(info, string(redisv1alpha1.RedisMasterSillPending)) &&
+		strings.Contains(info, string(redisv1alpha1.RedisLinkUp))
+	return ok, nil
+}
+
+func (r *DistributedRedisClusterReconciler) updatePodIfNeeded(ip string, pods []*corev1.Pod, revision_hashes []string, log logr.Logger, namespace string, role string) (bool, error) {
+	if index := strings.Index(ip, ":"); index > 0 {
+		ip = ip[:index]
+	}
+	for _, pod := range pods {
+		if ip == pod.Status.PodIP {
+			pod_name := strings.Split(pod.Name, "-")
+			stsIdentifier, err := strconv.Atoi(pod_name[len(pod_name)-2])
+			if err != nil {
+				return false, fmt.Errorf("unable to convert pod hash identifier to int")
+			}
+			pod_hash := strings.Split((pod.ObjectMeta.Labels[v1.ControllerRevisionHashLabelKey]), "-")
+			if len(pod_hash) < 3 {
+				return false, fmt.Errorf("pod hash is invalid")
+			}
+			client := k8sutil.NewPodController(r.Client)
+			if revision_hashes[stsIdentifier] != pod_hash[len(pod_hash)-1] {
+				err := client.DeletePodByName(namespace, pod.Name)
+				if err != nil {
+					return false, err
+				}
+				return true, err
+			} else {
+				err := r.setRoleLabelIfNeeded(ip, pod, role, namespace, client)
+				return false, err
+			}
+		}
+	}
+	return false, fmt.Errorf("pod not found")
+}
+
+func (r *DistributedRedisClusterReconciler) setRoleLabelIfNeeded(ip string, pod *corev1.Pod, role string, namespace string, client k8sutil.IPodControl) error {
+	for labelKey, labelValue := range pod.ObjectMeta.Labels {
+		if labelKey == redisv1alpha1.RedisRoleLabelKey && labelValue == role {
+			return nil
+		}
+	}
+	return client.UpdatePodLabels(pod, redisv1alpha1.RedisRoleLabelKey, role)
+}
+
+func (r *DistributedRedisClusterReconciler) getRedisIPsByRole(admin redisutil.IAdmin, log logr.Logger) ([]string, []string, error) {
+	var masterNodes, slaveNodes []string
+	for addr, c := range admin.Connections().GetAll() {
+		info, err := c.Info(context.TODO(), "Replication").Result()
+		if err != nil {
+			return nil, nil, err
+		}
+		if strings.Contains(info, "role:master") {
+			masterNodes = append(masterNodes, addr)
+		} else if strings.Contains(info, "role:slave") {
+			slaveNodes = append(slaveNodes, addr)
+		}
+	}
+	return masterNodes, slaveNodes, nil
+}
+
+func (r *DistributedRedisClusterReconciler) getStatefulsetUpdatedRevision(ctx *syncContext) ([]string, error) {
+	cluster := ctx.cluster
+	masterNum := int(cluster.Spec.MasterSize)
+	var hashes []string
+	for i := 0; i < masterNum; i++ {
+		stsName := statefulsets.ClusterStatefulSetName(cluster.Name, i)
+		sts, err := r.StatefulSetController.GetStatefulSet(cluster.Namespace, stsName)
+		if err != nil {
+			return hashes, Kubernetes.Wrap(err, "GetStatefulSet")
+		}
+		cssUR := strings.Split(sts.Status.UpdateRevision, "-")
+		if len(cssUR) > 0 {
+			hashes = append(hashes, cssUR[len(cssUR)-1])
+		}
+	}
+	return hashes, nil
 }

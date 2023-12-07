@@ -9,9 +9,9 @@ import (
 	"os"
 	"time"
 
-	redis "github.com/redis/go-redis/v9"
 	utils "github.com/dinesh-murugiah/rediscluster-operator/utils/commonutils"
 	"github.com/go-logr/logr"
+	redis "github.com/redis/go-redis/v9"
 )
 
 const (

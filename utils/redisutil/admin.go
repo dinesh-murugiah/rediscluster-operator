@@ -26,10 +26,12 @@ const (
 
 const (
 	clusterKnownNodesREString = "cluster_known_nodes:([0-9]+)"
+	forgotnodeUnknownREString = "ERR Unknown node ([a-z0-9]+)"
 )
 
 var (
 	clusterKnownNodesRE = regexp.MustCompile(clusterKnownNodesREString)
+	forgetnodeUnknownRE = regexp.MustCompile(forgotnodeUnknownREString)
 )
 
 // IAdmin redis cluster admin interface
@@ -580,7 +582,11 @@ func (a *Admin) ForgetNode(ctx context.Context, id string) error {
 		resp := c.Do(ctx, "CLUSTER", "FORGET", id)
 		a.Connections().ValidateResp(ctx, resp, nodeAddr, "Unable to execute FORGET command")
 		if resp.Err() != nil {
-			return resp.Err()
+			match := forgetnodeUnknownRE.FindStringSubmatch(resp.Err().Error())
+			a.log.Info("CLUSTER FORGET", "Error", resp.Err().Error(), "from", nodeAddr, "match:", match)
+			if len(match) == 0 {
+				return resp.Err()
+			}
 		}
 	}
 

@@ -4,7 +4,7 @@ metadata:
   annotations:
     # if your operator run as cluster-scoped, add this annotations
     redis.kun/scope: cluster-scoped
-  name: adminsecret
+  name: dbaas-redis--test-cluster--test-cluster-1--admin
 type: Opaque
 stringData:
   acl: ~* +@all
@@ -17,21 +17,20 @@ metadata:
   annotations:
     # if your operator run as cluster-scoped, add this annotations
     redis.kun/scope: cluster-scoped
-  name: defaultsecret
+  name: dbaas-redis--test-cluster--test-cluster-1--default
 type: Opaque
 stringData:
   acl: ~* +@all
   password: testpwd@123
   username: default
 ---
-
 apiVersion: v1
 kind: Secret
 metadata:
   annotations:
     # if your operator run as cluster-scoped, add this annotations
     redis.kun/scope: cluster-scoped
-  name: user1
+  name: dbaas-redis--test-cluster--test-cluster-1--dinesh
 type: Opaque
 stringData:
   acl: ~* +@all
@@ -44,45 +43,308 @@ metadata:
   annotations:
     # if your operator run as cluster-scoped, add this annotations
     redis.kun/scope: cluster-scoped
-  name: user2
+  name: dbaas-redis--test-cluster--test-cluster-1--samuel
 type: Opaque
 stringData:
   acl: ~* +@all
   password: samuel@123
   username: samuel
 ---
+apiVersion: v1
+kind: Secret
+metadata:
+  annotations:
+    # if your operator run as cluster-scoped, add this annotations
+    redis.kun/scope: cluster-scoped
+  name: dbaas-redis--test-cluster--test-cluster-1--pinger
+type: Opaque
+stringData:
+  acl: ~opqrstuvwredability &* -@all +ping +info +incr
+  password: pingpass
+  username: pinger
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: util-config
+data:
+  backupschedule.yaml: |
+    backupEnabled: false
+    logEnabled: true
+    backupInterval: 59m
+    logInterval: 1
+    s3retry: 6
+    backupretry: 6
+    termCheckIteration: -1
+    termCheckInterval: 5
+    compressEnabled: true
+    compressLevel: -1
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: liveness-data
+data:
+  liveness.sh: |
+    #!/bin/sh
+    redis-cli -h $HOSTNAME --user pinger --pass pingpass --no-auth-warning ping | grep -q PONG
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: readiness-data
+data:
+  readiness.sh: |
+    #!/bin/sh
+    redis-cli -h $HOSTNAME --user pinger --pass pingpass --no-auth-warning ping | grep -q PONG
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: startup-data
+data:
+  startup.sh: |
+    #!/bin/sh
+    redis-cli -h $HOSTNAME --user pinger --pass pingpass --no-auth-warning ping | grep -q PONG
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: shutdown-data
+data:
+  shutdown.sh: |
+    #!/bin/sh
+    set -x
+    REDIS_PORT="6379" #pass this as env
+    # S3_BUCKET="redis-logs-bucket-staging-us-east-1" #pass this as env
+    # TERMINATION_GRACE_PERIOD="300" #pass this as env
+    CLUSTER_CONFIG="/data/nodes.conf"
+    run_redis_command() {
+        redis-cli -h 127.0.0.1 -p ${REDIS_PORT} --user admin "$@"
+    }
+    is_master() {
+        REDIS_ROLE=$(run_redis_command role | head -1)
+        [ "$REDIS_ROLE" = "master" ]
+    }
 
+    # Function to check if the file is created
+    file_created() {
+        local file_path="$1"
+        [ -e "$file_path" ] && [ "$(stat -c %Y "$file_path")" -ge "$bgsave_time_started" ]
+    }
 
+    # redis-cli automatically consumes credentials from the REDISCLI_AUTH variable
+    [ -n "$REDIS_PASSWORD" ] && export REDISCLI_AUTH="$REDIS_PASSWORD"
+
+    if is_master; then
+      # Perform CLIENT PAUSE FOR WRITE 5M
+      # DO BGSAVE
+      # INITIATE CLUSTER FAILOVER
+      # WAIT FOR DUMP.RDB and UPLOAD TO S3
+      # SHUTDOWN
+      # ALL the above to happen within termination grace time period.
+        echo "I am the master pod and you are stopping me. Stopping client connections for next 5m"
+        # Stopping client write connections to avoid data loss
+        run_redis_command CLIENT PAUSE 1200000 WRITE
+        # issue a commands, (1)KILL all client connections, (2)BGSAVE RDB, (3)CLIENT FAILOVER (4)S3 UPLOAD
+        echo "Wait 10s before killing all connections and issuing SAVE"
+        sleep 10
+        run_redis_command CLIENT KILL TYPE normal
+        # Sleep 1s and do a bgsave on red
+        sleep 1
+        run_redis_command BGSAVE
+        #Record start time
+        bgsave_time_started=$(date +%s)
+        echo "Do CLUSTER FAILOVER"
+      masterID=$(cat ${CLUSTER_CONFIG} | grep "myself" | awk '{print $1}')
+      echo "Master: ${masterID}"
+      slave=$(cat ${CLUSTER_CONFIG} | grep ${masterID} | grep "slave" | awk 'NR==1{print $2}' | sed 's/:6379@16379//')
+      echo "Slave: ${slave}"
+      redis-cli -h ${slave} -p ${REDIS_PORT} --user admin -a "${REDIS_PASSWORD}" CLUSTER FAILOVER
+      #verify if cluster failover is complete by checking self redis role. If not successful, do cluster failover force
+      sleep 10 #wait for failover timeout and 5 seconds extra
+      if is_master; then #failover unsuccessful 
+        echo "Failover unsuccessful"
+        #do cluster failover force
+        redis-cli -h ${slave} -p ${REDIS_PORT} --user admin -a "${REDIS_PASSWORD}" CLUSTER FAILOVER FORCE
+      else
+        echo "Failover Success, proceed further..."
+      fi
+      #HAVE LOGIC TO VERIFY IF dump.rdb is created and upload it to S3.
+      #Construct S3 PATH.
+      #Ex Tenant - drc-distributedrediscluster-test-cluster-1-0-1
+      shard_num=$(echo "$HOSTNAME" | awk -F'-' '{print $(NF-1)}')
+      tenant=$(echo "$HOSTNAME" | sed 's/^drc-distributedrediscluster-\(.*\)-[0-9]-[0-9]$/\1/')
+      current_date=$(date +'%Y/%m/%d')
+      s3_tenant_path="s3://$S3_BUCKET/rediscluster/rdb/distributedrediscluster-$tenant/$shard_num/$current_date/"
+      # Check if the file dump.rdb has been created since the bgsave started
+      file_path="/data/dump.rdb"
+      while [ "$(( $(date +%s) - start_time ))" -lt "$TERMINATION_GRACE_PERIOD" ] && ! file_created "$file_path"; do
+          echo "File $file_path does not exist. Retrying in 5 seconds..."
+          sleep 5
+      done
+      if file_created "$file_path"; then
+
+        # Run redis-check-rdb
+          redis_check_output=$(redis-check-rdb "$file_path" 2>&1)
+          
+          # Check if the output contains "RDB looks OK!"
+          if echo "$redis_check_output" | grep -q "RDB looks OK!"; then
+              echo "Redis check passed. Proceeding further."
+
+          # Get the current epoch time
+            current_epoch_time=$(date +%s)
+
+            # Compress the file to a temporary file
+            temp_file="${file_path}_temp_${current_epoch_time}.rdb.gz"
+            gzip -c "$file_path" > "$temp_file"
+            
+            # Rename the temporary file to the original file
+            zipped_file="${file_path%/*}/${current_epoch_time}.rdb.gz"
+            mv "$temp_file" "$zipped_file"
+            echo "File $file_path compressed and renamed to $zipped_file"
+            # AWS S3 copy command 
+          aws s3 cp $zipped_file $s3_tenant_path
+        else
+          echo "Failed SANITY Check, Exiting"
+          exit 0
+        fi
+      fi
+        run_redis_command SHUTDOWN
+    else
+        exit 0
+    fi
+---
 apiVersion: redis.kun/v1alpha1
 kind: DistributedRedisCluster
 metadata:
   annotations:
     # if your operator run as cluster-scoped, add this annotations
     redis.kun/scope: cluster-scoped
-  name: example-distributedrediscluster
+  name: distributedrediscluster-test-cluster-1
 spec:
+  pdbEnabled: True
+  additionalUsers:
+  - name: dbaas-redis--test-cluster--test-cluster-1--dinesh
+  - name: dbaas-redis--test-cluster--test-cluster-1--pinger
+  adminUser:
+    name: dbaas-redis--test-cluster--test-cluster-1--admin
+  annotations:
+    prometheus.io/path: /metrics
+    prometheus.io/port: "9100"
+    prometheus.io/scrape: "true"
+  clusterReplicas: 1
+  config:
+    activerehashing: "yes"
+    appendonly: "no"
+    maxmemory: "734003200"
+    maxmemory-policy: noeviction
+    maxmemory-samples: "30"
+    notify-keyspace-events: ""
+  defaultUser:
+    name: dbaas-redis--test-cluster--test-cluster-1--default
+  env:
+    - name: "REDIS_PORT"
+      value: "6379"
+    - name: "TERMINATION_GRACE_PERIOD"
+      value: "300"
+    - name: "S3_BUCKET"
+      value: "redis-logs-bucket-staging-us-east-1"
+  utilConfig: "util-config"
+  image: redis:6.2.13
   initContainers:
   - name: initialize
-    image: hello-world:latest
+    image: ubuntu:latest
     imagePullPolicy: IfNotPresent
+    command: ["/bin/echo"] #change later - "/usr/local/bin/restoreclusterutil"
+    args: ["Starting Redis cluster node"]
+    env:
+    - name: "CLUSTER_NAME"
+      value: "distributedrediscluster-test-cluster-1"
+    volumeMounts:
+    - mountPath: /config
+      name: utilconf
+    - mountPath: /data
+      name: redis-data
   masterSize: 3
-  clusterReplicas: 1
-  adminUser:
-    name: adminsecret
-  defaultUser:
-    name: defaultsecret
-  additionalUsers:
-    - name: user1
-    - name: user2
-  image: redis:6.2.12
+  terminationGracePeriod: 30
+  customLivenessProbe:
+    exec:
+      command:
+      - /bin/sh
+      - -c
+      - /liveprobe/liveness.sh
+    failureThreshold: 60
+    initialDelaySeconds: 30
+    periodSeconds: 10
+    successThreshold: 1
+    timeoutSeconds: 5
+  customReadinessProbe:
+    exec:
+      command:
+      - /bin/sh
+      - -c
+      - /readyprobe/readiness.sh
+    failureThreshold: 3
+    initialDelaySeconds: 30
+    periodSeconds: 10
+    successThreshold: 1
+    timeoutSeconds: 5
+  customStartupProbe:
+    exec:
+      command:
+      - /bin/sh
+      - -c
+      - /startupprobe/startup.sh
+    failureThreshold: 3
+    initialDelaySeconds: 30
+    periodSeconds: 10
+    successThreshold: 1
+    timeoutSeconds: 5
+  monitor:
+  - name: redis-exporter
+    image: oliver006/redis_exporter:latest
+    prometheus:
+      port: 9100
+    resources:
+      limits:
+        cpu: 300m
+        memory: 200Mi
+      requests:
+        cpu: 100m
+        memory: 100Mi
+    args:
+    - --web.listen-address=:9100
+    - --web.telemetry-path=/metrics
+
+  - name: node-exporter
+    image: prom/node-exporter:latest #fix-me
+    prometheus:
+      port: 9151
+    resources:
+      limits:
+        cpu: 300m
+        memory: 200Mi
+      requests:
+        cpu: 100m
+        memory: 100Mi
+    args:
+    - --web.listen-address=0.0.0.0:9151
+    - --collector.disable-defaults
+    - --web.disable-exporter-metrics
+    - --collector.conntrack
+    - --collector.filefd
+    - --collector.netstat
+    - --collector.sockstat
   resources:
     limits:
-      cpu: 400m
-      memory: 1000Mi
+      cpu: 200m
+      memory: 500Mi
     requests:
-      cpu: 300m
-      memory: 600Mi
+      cpu: 100m
+      memory: 300Mi
+  serviceName: distributedrediscluster-test-cluster-1
   storage:
-    type: ephemeral
-    size: 1Gi
     class: ""
+    size: 1Gi
+    type: ephemeral

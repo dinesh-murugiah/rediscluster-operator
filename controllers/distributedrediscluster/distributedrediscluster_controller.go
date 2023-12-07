@@ -78,6 +78,8 @@ type DistributedRedisClusterReconciler struct {
 	PdbController         k8sutil.IPodDisruptionBudgetControl
 	PvcController         k8sutil.IPvcControl
 	CrController          k8sutil.ICustomResource
+	PodController         k8sutil.IPodControl
+	NodeController        k8sutil.INodeControl
 }
 
 //+kubebuilder:rbac:groups=redis.kun,resources=distributedredisclusters,verbs=get;list;watch;create;update;patch;delete
@@ -160,8 +162,8 @@ func (r *DistributedRedisClusterReconciler) Reconcile(ctx context.Context, reque
 		cluster:   instance,
 		reqLogger: reqLogger,
 	}
-
-	err = r.ensureCluster(syncCtx)
+	var isStsCreated bool = false
+	isStsCreated, err = r.ensureCluster(syncCtx)
 	if err != nil {
 		switch GetType(err) {
 		case StopRetry:
@@ -170,27 +172,31 @@ func (r *DistributedRedisClusterReconciler) Reconcile(ctx context.Context, reque
 		}
 		reqLogger.WithValues("err", err).Info("ensureCluster")
 		newStatus := instance.Status.DeepCopy()
+		if instance.Status.HAStatus == "" || isStsCreated {
+			SetHAStatus(newStatus, rediskunv1alpha1.HaStatusCreating)
+		}
 		SetClusterScaling(newStatus, err.Error())
 		r.updateClusterIfNeed(instance, newStatus, reqLogger)
 		return reconcile.Result{RequeueAfter: requeueAfter}, nil
 	} else {
+		var newStatus *rediskunv1alpha1.DistributedRedisClusterStatus
+		newStatus = instance.Status.DeepCopy()
 		if instance.Status.SecretStatus == "" {
-			var newStatus *rediskunv1alpha1.DistributedRedisClusterStatus
 			secretVersions, err := configmaps.Getsecretversions(reqLogger, r.Client, instance)
 			if err != nil {
-				newStatus = instance.Status.DeepCopy()
 				SetSecretStatus(newStatus, "aclconferror")
 			} else {
-				newStatus = instance.Status.DeepCopy()
 				SetSecretStatus(newStatus, "aclconfdone")
 				newStatus.SecretsVer = make(map[string]string)
 				for key, value := range secretVersions {
 					newStatus.SecretsVer[key] = value
 				}
 			}
-
-			r.updateClusterIfNeed(instance, newStatus, reqLogger)
 		}
+		if instance.Status.HAStatus == "" || isStsCreated {
+			SetHAStatus(newStatus, "hacreating")
+		}
+		r.updateClusterIfNeed(instance, newStatus, reqLogger)
 	}
 
 	matchLabels := getLabels(instance)
@@ -333,7 +339,8 @@ func (r *DistributedRedisClusterReconciler) Reconcile(ctx context.Context, reque
 		return reconcile.Result{}, Redis.Wrap(err, "SetConfigIfNeed")
 	}
 
-	status := buildClusterStatus(clusterInfos, syncCtx.pods, instance, reqLogger)
+	// Un optimial calling of buildClusterStatus , Donot remove this from here as its used for cluster creation process
+	status := buildClusterStatus(clusterInfos, syncCtx.pods, instance, reqLogger, r.Client, true)
 	if is := r.isScalingDown(instance, reqLogger); is {
 		SetClusterRebalancing(status, "scaling down")
 	}
@@ -356,11 +363,32 @@ func (r *DistributedRedisClusterReconciler) Reconcile(ctx context.Context, reque
 	if err != nil {
 		if clusterInfos.Status == redisutil.ClusterInfosPartial {
 			return reconcile.Result{}, Redis.Wrap(err, "GetClusterInfos")
+		} else if clusterInfos.Status == redisutil.ClusterInfosInconsistent {
+			reqLogger.Info("after syncCluster clusterInfos inconsistent resync after 10 seconds")
+			newStatus := instance.Status.DeepCopy()
+			SetClusterScaling(newStatus, err.Error())
+			r.updateClusterIfNeed(instance, newStatus, reqLogger)
+			return reconcile.Result{RequeueAfter: 10 * time.Second}, nil
 		}
 	}
-	newStatus := buildClusterStatus(newClusterInfos, syncCtx.pods, instance, reqLogger)
+	newStatus := buildClusterStatus(newClusterInfos, syncCtx.pods, instance, reqLogger, r.Client, true)
+	haStatus, _ := buildHAStatus(newClusterInfos, syncCtx.pods, instance, reqLogger, r.Client)
+	SetHAStatus(newStatus, haStatus)
 	SetClusterOK(newStatus, "OK")
 	r.updateClusterIfNeed(instance, newStatus, reqLogger)
+
+	requeue, err = r.checkandUpdatePods(admin, syncCtx, context)
+	if err != nil {
+		newStatus := instance.Status.DeepCopy()
+		SetClusterFailed(newStatus, err.Error())
+		r.updateClusterIfNeed(instance, newStatus, reqLogger)
+		return reconcile.Result{}, err
+	}
+
+	if requeue {
+		return reconcile.Result{RequeueAfter: 5 * time.Second}, nil
+	}
+
 	return reconcile.Result{RequeueAfter: time.Duration(reconcileTime) * time.Second}, nil
 }
 

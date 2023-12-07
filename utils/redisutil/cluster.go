@@ -12,6 +12,7 @@ type Cluster struct {
 	Status         redisv1alpha1.ClusterStatus
 	NodesPlacement redisv1alpha1.NodesPlacementInfo
 	ActionsInfo    ClusterActionsInfo
+	HaStatus       redisv1alpha1.HaStatus
 }
 
 // ClusterActionsInfo use to store information about current action on the Cluster

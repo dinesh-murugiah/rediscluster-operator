@@ -19,6 +19,8 @@ type IPodControl interface {
 	DeletePodByName(namespace, name string) error
 	// GetPod get Pod in a DistributedRedisCluster.
 	GetPod(namespace, name string) (*corev1.Pod, error)
+	// UpdatePodLabels updates label of a pod in a DistributedRedisCluster.
+	UpdatePodLabels(pod *corev1.Pod, labelKey string, labelValue string) error
 }
 
 type PodController struct {
@@ -53,6 +55,15 @@ func (p *PodController) DeletePodByName(namespace, name string) error {
 		return err
 	}
 	return p.client.Delete(context.TODO(), pod)
+}
+
+func (p *PodController) UpdatePodLabels(pod *corev1.Pod, labelKey string, labelValue string) error {
+
+	if pod.Labels == nil {
+		pod.Labels = make(map[string]string)
+	}
+	pod.Labels[labelKey] = labelValue
+	return p.UpdatePod(pod)
 }
 
 // GetPod implement the IPodControl.Interface.

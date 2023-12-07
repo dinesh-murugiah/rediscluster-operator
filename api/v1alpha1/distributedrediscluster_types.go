@@ -42,6 +42,7 @@ type DistributedRedisClusterSpec struct {
 	ServiceName      string                        `json:"serviceName,omitempty"`
 	Config           map[string]string             `json:"config,omitempty"`
 	// Set RequiredAntiAffinity to force the master-slave node anti-affinity.
+	HaConfig                 *HAspec                       `json:"haConfig,omitempty"`
 	RequiredAntiAffinity     bool                          `json:"requiredAntiAffinity,omitempty"`
 	Affinity                 *corev1.Affinity              `json:"affinity,omitempty"`
 	NodeSelector             map[string]string             `json:"nodeSelector,omitempty"`
@@ -54,12 +55,26 @@ type DistributedRedisClusterSpec struct {
 	AdminSecret              *corev1.LocalObjectReference  `json:"adminUser,omitempty"`
 	DefaultSecret            *corev1.LocalObjectReference  `json:"defaultUser,omitempty"`
 	AdditionalSecret         []corev1.LocalObjectReference `json:"additionalUsers,omitempty"`
-	Monitor                  *AgentSpec                    `json:"monitor,omitempty"`
+	UtilConfig               string                        `json:"utilConfig"`
+	Monitor                  *[]AgentSpec                  `json:"monitor,omitempty"`
 	Restore                  *RestoreSpec                  `json:"restoreContainer,omitempty"`
+	TerminationGracePeriod   *int64                        `json:"terminationGracePeriod,omitempty"`
+	CustomLivenessProbe      corev1.Probe                  `json:"customLivenessProbe"`
+	CustomReadinessProbe     corev1.Probe                  `json:"customReadinessProbe"`
+	CustomStartupProbe       corev1.Probe                  `json:"customStartupProbe"`
+	PdbEnabled               bool                          `json:"pdbEnabled"`
 }
+
+type HAspec struct {
+	HaEnabled bool              `json:"haEnabled"`
+	ZonesInfo map[string]string `json:"zonesInfo"`
+}
+
 type AgentSpec struct {
+	Name       string          `json:"name,omitempty"`
 	Image      string          `json:"image,omitempty"`
 	Prometheus *PrometheusSpec `json:"prometheus,omitempty"`
+	Command    []string        `json:"command,omitempty"`
 	// Arguments to the entrypoint.
 	// The docker image's CMD is used if this is not provided.
 	// Variable references $(VAR_NAME) are expanded using the container's environment. If a variable
@@ -91,6 +106,9 @@ type AgentSpec struct {
 type PrometheusSpec struct {
 	// Port number for the exporter side car.
 	Port int32 `json:"port,omitempty"`
+
+	// Metrics name for the exporter side car
+	Name string `json:"name,omitempty"`
 
 	// Namespace of Prometheus. Service monitors will be created in this namespace.
 	Namespace string `json:"namespace,omitempty"`
@@ -127,6 +145,7 @@ type DistributedRedisClusterStatus struct {
 	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
 	Status               ClusterStatus      `json:"status"`
+	HAStatus             HaStatus           `json:"haStatus"`
 	SecretStatus         string             `json:"secretstatus"`
 	SecretsVer           map[string]string  `json:"secretverisons"`
 	Reason               string             `json:"reason,omitempty"`
@@ -153,6 +172,7 @@ type RedisClusterNode struct {
 	MasterRef   string    `json:"masterRef,omitempty"`
 	PodName     string    `json:"podName"`
 	NodeName    string    `json:"nodeName"`
+	Zonename    string    `json:"zonename"`
 	StatefulSet string    `json:"statefulSet"`
 }
 

@@ -2,6 +2,8 @@ package manager
 
 import (
 	"fmt"
+	"reflect"
+	"sort"
 	"strings"
 
 	"github.com/go-logr/logr"
@@ -19,8 +21,8 @@ import (
 
 type IEnsureResource interface {
 	EnsureRedisStatefulsets(cluster *redisv1alpha1.DistributedRedisCluster, labels map[string]string) (bool, error)
-	EnsureRedisHeadLessSvcs(cluster *redisv1alpha1.DistributedRedisCluster, labels map[string]string) error
-	EnsureRedisSvc(cluster *redisv1alpha1.DistributedRedisCluster, labels map[string]string) error
+	EnsureClusterShardsHeadLessSvcs(cluster *redisv1alpha1.DistributedRedisCluster, labels map[string]string) error
+	EnsureClusterHeadLessSvc(cluster *redisv1alpha1.DistributedRedisCluster, labels map[string]string) error
 	EnsureRedisConfigMap(cluster *redisv1alpha1.DistributedRedisCluster, labels map[string]string) (error, bool)
 	EnsureRedisRCloneSecret(cluster *redisv1alpha1.DistributedRedisCluster, labels map[string]string) error
 	UpdateRedisStatefulsets(cluster *redisv1alpha1.DistributedRedisCluster, labels map[string]string) error
@@ -49,31 +51,41 @@ func NewEnsureResource(client client.Client, logger logr.Logger) IEnsureResource
 }
 
 func (r *realEnsureResource) EnsureRedisStatefulsets(cluster *redisv1alpha1.DistributedRedisCluster, labels map[string]string) (bool, error) {
-	updated := false
+	var StsCreatedcount int = 0
+	var isSTScreated bool = false
 	for i := 0; i < int(cluster.Spec.MasterSize); i++ {
 		name := statefulsets.ClusterStatefulSetName(cluster.Name, i)
 		svcName := statefulsets.ClusterHeadlessSvcName(cluster.Spec.ServiceName, i)
 		// assign label
 		labels[redisv1alpha1.StatefulSetLabel] = name
-		if stsUpdated, err := r.ensureRedisStatefulset(cluster, name, svcName, labels); err != nil {
-			return false, err
-		} else if stsUpdated {
-			updated = stsUpdated
+		labels[redisv1alpha1.ShardLabel] = name
+		stsStatus, err := r.ensureRedisStatefulset(cluster, name, svcName, labels)
+		if err != nil {
+			return isSTScreated, err
+		}
+		if err == nil && !stsStatus {
+			StsCreatedcount++
+			isSTScreated = true
 		}
 	}
-	return updated, nil
+	if StsCreatedcount > 0 {
+		return isSTScreated, nil
+	} else {
+		return isSTScreated, nil
+	}
+
 }
 
 func (r *realEnsureResource) ensureRedisStatefulset(cluster *redisv1alpha1.DistributedRedisCluster, ssName, svcName string,
 	labels map[string]string) (bool, error) {
-	/* Commenting out to support launch in 1.24 k8s
-	if err := r.ensureRedisPDB(cluster, ssName, labels); err != nil {
-		return false, err
+	if cluster.Spec.PdbEnabled {
+		if err := r.ensureRedisPDB(cluster, ssName, labels); err != nil {
+			return false, err
+		}
 	}
-	*/
 	ss, err := r.statefulSetClient.GetStatefulSet(cluster.Namespace, ssName)
 	if err == nil {
-		if shouldUpdateRedis(cluster, ss) {
+		if shouldUpdateRedis(cluster, ss) || shouldUpdateMonitor(cluster, ss) {
 			r.logger.WithValues("StatefulSet.Namespace", cluster.Namespace, "StatefulSet.Name", ssName).
 				Info("updating statefulSet")
 			newSS, err := statefulsets.NewStatefulSetForCR(cluster, ssName, svcName, labels)
@@ -120,25 +132,43 @@ func shouldUpdateRedis(cluster *redisv1alpha1.DistributedRedisCluster, sts *apps
 	if result := expectResource.Limits.Cpu().Cmp(*currentResource.Limits.Cpu()); result != 0 {
 		return true
 	}
-	return monitorChanged(cluster, sts)
+	return false
 }
 
-func monitorChanged(cluster *redisv1alpha1.DistributedRedisCluster, sts *appsv1.StatefulSet) bool {
-	if cluster.Spec.Monitor != nil {
-		for _, container := range sts.Spec.Template.Spec.Containers {
-			if container.Name == statefulsets.ExporterContainerName {
-				return false
+func shouldUpdateMonitor(cluster *redisv1alpha1.DistributedRedisCluster, sts *appsv1.StatefulSet) bool {
+	for _, crspec := range *cluster.Spec.Monitor {
+		for _, cspec := range sts.Spec.Template.Spec.Containers {
+			if crspec.Name == cspec.Name {
+				if crspec.Image != cspec.Image {
+					return true
+				}
+
+				//compare arguments
+				sort.Strings(crspec.Args)
+				sort.Strings(cspec.Args)
+				if !reflect.DeepEqual(crspec.Args, cspec.Args) {
+					return true
+				}
+
+				// Checking resources
+				expectedResource := crspec.Resources
+				currentResource := cspec.Resources
+				if result := expectedResource.Requests.Memory().Cmp(*currentResource.Requests.Memory()); result != 0 {
+					return true
+				}
+				if result := expectedResource.Requests.Cpu().Cmp(*currentResource.Requests.Cpu()); result != 0 {
+					return true
+				}
+				if result := expectedResource.Limits.Memory().Cmp(*currentResource.Limits.Memory()); result != 0 {
+					return true
+				}
+				if result := expectedResource.Limits.Cpu().Cmp(*currentResource.Limits.Cpu()); result != 0 {
+					return true
+				}
 			}
 		}
-		return true
-	} else {
-		for _, container := range sts.Spec.Template.Spec.Containers {
-			if container.Name == statefulsets.ExporterContainerName {
-				return true
-			}
-		}
-		return false
 	}
+	return false
 }
 
 func (r *realEnsureResource) ensureRedisPDB(cluster *redisv1alpha1.DistributedRedisCluster, name string, labels map[string]string) error {
@@ -152,12 +182,13 @@ func (r *realEnsureResource) ensureRedisPDB(cluster *redisv1alpha1.DistributedRe
 	return err
 }
 
-func (r *realEnsureResource) EnsureRedisHeadLessSvcs(cluster *redisv1alpha1.DistributedRedisCluster, labels map[string]string) error {
+func (r *realEnsureResource) EnsureClusterShardsHeadLessSvcs(cluster *redisv1alpha1.DistributedRedisCluster, labels map[string]string) error {
 	for i := 0; i < int(cluster.Spec.MasterSize); i++ {
 		svcName := statefulsets.ClusterHeadlessSvcName(cluster.Spec.ServiceName, i)
 		name := statefulsets.ClusterStatefulSetName(cluster.Name, i)
 		// assign label
 		labels[redisv1alpha1.StatefulSetLabel] = name
+		labels[redisv1alpha1.ShardLabel] = name
 		if err := r.ensureRedisHeadLessSvc(cluster, svcName, labels); err != nil {
 			return err
 		}
@@ -176,14 +207,14 @@ func (r *realEnsureResource) ensureRedisHeadLessSvc(cluster *redisv1alpha1.Distr
 	return err
 }
 
-func (r *realEnsureResource) EnsureRedisSvc(cluster *redisv1alpha1.DistributedRedisCluster, labels map[string]string) error {
+func (r *realEnsureResource) EnsureClusterHeadLessSvc(cluster *redisv1alpha1.DistributedRedisCluster, labels map[string]string) error {
 	name := cluster.Spec.ServiceName
 	delete(labels, redisv1alpha1.StatefulSetLabel)
 	_, err := r.svcClient.GetService(cluster.Namespace, name)
 	if err != nil && errors.IsNotFound(err) {
 		r.logger.WithValues("Service.Namespace", cluster.Namespace, "Service.Name", cluster.Spec.ServiceName).
 			Info("creating a new service")
-		svc := services.NewSvcForCR(cluster, name, labels)
+		svc := services.NewHeadLessSvcForCR(cluster, name, labels)
 		return r.svcClient.CreateService(svc)
 	}
 	return err
@@ -217,7 +248,7 @@ func (r *realEnsureResource) EnsureRedisConfigMap(cluster *redisv1alpha1.Distrib
 	aclcmName := configmaps.AclConfigMapName(cluster.Name)
 	_, err2 := r.configMapClient.GetConfigMap(cluster.Namespace, aclcmName)
 	if err2 != nil {
-		if errors.IsNotFound(err) {
+		if errors.IsNotFound(err2) {
 			r.logger.WithValues("ConfigMap.Namespace", cluster.Namespace, "ConfigMap.Name", cmName).
 				Info("creating a new ACL configMap")
 			aclcm, _, conferr, abortcr := configmaps.NewACLConfigMap(r.logger, r.client, cluster, labels)
@@ -320,6 +351,7 @@ func (r *realEnsureResource) UpdateRedisStatefulsets(cluster *redisv1alpha1.Dist
 		svcName := statefulsets.ClusterHeadlessSvcName(cluster.Spec.ServiceName, i)
 		// assign label
 		labels[redisv1alpha1.StatefulSetLabel] = name
+		labels[redisv1alpha1.ShardLabel] = name
 		if err := r.updateRedisStatefulset(cluster, name, svcName, labels); err != nil {
 			return err
 		}

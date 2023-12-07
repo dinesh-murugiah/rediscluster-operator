@@ -13,7 +13,6 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
-	store "kmodules.xyz/objectstore-api/api/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
@@ -93,12 +92,6 @@ func NewDistributedRedisCluster(name, namespace, image, passwordName string, mas
 				Size:        resource.MustParse("10Gi"),
 				Class:       storageClassName,
 				DeleteClaim: true,
-			},
-			Monitor: &redisv1alpha1.AgentSpec{
-				Image: exporterImage,
-				Prometheus: &redisv1alpha1.PrometheusSpec{
-					Port: 9121,
-				},
 			},
 			Annotations: map[string]string{
 				"prometheus.io/app-metrics":      "true",
@@ -278,7 +271,6 @@ func RestoreDRC(drc *redisv1alpha1.DistributedRedisCluster, drcb *redisv1alpha1.
 			AdminSecret:     drc.Spec.AdminSecret,
 			Resources:       drc.Spec.Resources,
 			Storage:         drc.Spec.Storage,
-			Monitor:         drc.Spec.Monitor,
 			Annotations:     drc.Spec.Annotations,
 			Restore: &redisv1alpha1.RestoreSpec{BackupSource: &redisv1alpha1.BackupSourceSpec{
 				Namespace: drcb.Namespace,
@@ -337,15 +329,15 @@ func NewRedisClusterBackup(name, namespace, image, drcName, storageSecretName, s
 			},
 		},
 		Spec: redisv1alpha1.RedisClusterBackupSpec{
-			Image:            image,
+			//			Image:            image,
 			RedisClusterName: drcName,
-			Backend: store.Backend{
-				StorageSecretName: storageSecretName,
-				S3: &store.S3Spec{
-					Endpoint: s3Endpoint,
-					Bucket:   s3Bucket,
-				},
-			},
+			// Backend: store.Backend{
+			// 	StorageSecretName: storageSecretName,
+			// 	S3: &store.S3Spec{
+			// 		Endpoint: s3Endpoint,
+			// 		Bucket:   s3Bucket,
+			// 	},
+			// },
 		},
 	}
 

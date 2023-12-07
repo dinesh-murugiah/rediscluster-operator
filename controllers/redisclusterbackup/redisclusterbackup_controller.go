@@ -18,10 +18,8 @@ package redisclusterbackup
 
 import (
 	"context"
-	"fmt"
 	"time"
 
-	batch "k8s.io/api/batch/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/record"
@@ -34,12 +32,10 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	rediskunv1alpha1 "github.com/dinesh-murugiah/rediscluster-operator/api/v1alpha1"
+	//rediskunv1alpha1 "github.com/dinesh-murugiah/rediscluster-operator/api/v1alpha1"
 	redisv1alpha1 "github.com/dinesh-murugiah/rediscluster-operator/api/v1alpha1"
 	utils "github.com/dinesh-murugiah/rediscluster-operator/utils/commonutils"
 	"github.com/dinesh-murugiah/rediscluster-operator/utils/k8sutil"
-	"github.com/go-logr/logr"
-	"github.com/robfig/cron"
 	"github.com/spf13/pflag"
 )
 
@@ -52,10 +48,13 @@ var (
 
 	pred predicate.Funcs
 
-	jobPred predicate.Funcs
+	//jobPred predicate.Funcs
 )
 
-const backupFinalizer = "finalizer.backup.redis.kun"
+const (
+	backupFinalizer        = "finalizer.backup.redis.kun"
+	redisClusterBackupName = "redisclusterbackup"
+)
 
 func init() {
 	controllerFlagSet = pflag.NewFlagSet("controller", pflag.ExitOnError)
@@ -75,6 +74,9 @@ type RedisClusterBackupReconciler struct {
 	CrController          k8sutil.ICustomResource
 	StatefulSetController k8sutil.IStatefulSetControl
 	JobController         k8sutil.IJobControl
+	DeploymentController  k8sutil.IDeploymentControl
+	ConfigmapController   k8sutil.IConfigMapControl
+	SecretController      k8sutil.ISecretControl
 }
 
 func redisbackupcontrollerPredfunction() predicate.Funcs {
@@ -115,50 +117,50 @@ func redisbackupcontrollerPredfunction() predicate.Funcs {
 	return pred
 }
 
-func backupcontrollerjobPredfunction() predicate.Funcs {
-	jobPred = predicate.Funcs{
-		UpdateFunc: func(e event.UpdateEvent) bool {
-			logl.WithValues("namespace", e.ObjectNew.GetNamespace(), "name", e.ObjectNew.GetName()).Info("Call Job UpdateFunc")
-			if !utils.ShoudManage(e.ObjectNew) {
-				logl.WithValues("namespace", e.ObjectNew.GetNamespace(), "name", e.ObjectNew.GetName()).Info("Job UpdateFunc Not Manage")
-				return false
-			}
-			newObj := e.ObjectNew.(*batch.Job)
-			if isJobCompleted(newObj) && newObj.DeletionTimestamp == nil {
-				return true
-			}
-			return false
-		},
-		DeleteFunc: func(e event.DeleteEvent) bool {
-			logl.WithValues("namespace", e.Object.GetNamespace(), "name", e.Object.GetName()).Info("Call Job Delete")
-			if !utils.ShoudManage(e.Object) {
-				return false
-			}
-			job, ok := e.Object.(*batch.Job)
-			if !ok {
-				logl.Error(nil, "Invalid Job object")
-				return false
-			}
-			if job.Status.Succeeded == 0 && job.Status.Failed <= utils.Int32(job.Spec.BackoffLimit) {
-				return false
-			}
-			return false
-		},
-		CreateFunc: func(e event.CreateEvent) bool {
-			logl.WithValues("namespace", e.Object.GetNamespace(), "name", e.Object.GetName()).Info("Call Job CreateFunc")
-			if !utils.ShoudManage(e.Object) {
-				logl.WithValues("namespace", e.Object.GetNamespace(), "name", e.Object.GetName()).Info("Job CreateFunc Not Manage")
-				return false
-			}
-			job := e.Object.(*batch.Job)
-			if job.Status.Succeeded > 0 || job.Status.Failed >= utils.Int32(job.Spec.BackoffLimit) {
-				return false
-			}
-			return false
-		},
-	}
-	return jobPred
-}
+// func backupcontrollerjobPredfunction() predicate.Funcs {
+// 	jobPred = predicate.Funcs{
+// 		UpdateFunc: func(e event.UpdateEvent) bool {
+// 			logl.WithValues("namespace", e.ObjectNew.GetNamespace(), "name", e.ObjectNew.GetName()).Info("Call Job UpdateFunc")
+// 			if !utils.ShoudManage(e.ObjectNew) {
+// 				logl.WithValues("namespace", e.ObjectNew.GetNamespace(), "name", e.ObjectNew.GetName()).Info("Job UpdateFunc Not Manage")
+// 				return false
+// 			}
+// 			newObj := e.ObjectNew.(*batch.Job)
+// 			if isJobCompleted(newObj) && newObj.DeletionTimestamp == nil {
+// 				return true
+// 			}
+// 			return false
+// 		},
+// 		DeleteFunc: func(e event.DeleteEvent) bool {
+// 			logl.WithValues("namespace", e.Object.GetNamespace(), "name", e.Object.GetName()).Info("Call Job Delete")
+// 			if !utils.ShoudManage(e.Object) {
+// 				return false
+// 			}
+// 			job, ok := e.Object.(*batch.Job)
+// 			if !ok {
+// 				logl.Error(nil, "Invalid Job object")
+// 				return false
+// 			}
+// 			if job.Status.Succeeded == 0 && job.Status.Failed <= utils.Int32(job.Spec.BackoffLimit) {
+// 				return false
+// 			}
+// 			return false
+// 		},
+// 		CreateFunc: func(e event.CreateEvent) bool {
+// 			logl.WithValues("namespace", e.Object.GetNamespace(), "name", e.Object.GetName()).Info("Call Job CreateFunc")
+// 			if !utils.ShoudManage(e.Object) {
+// 				logl.WithValues("namespace", e.Object.GetNamespace(), "name", e.Object.GetName()).Info("Job CreateFunc Not Manage")
+// 				return false
+// 			}
+// 			job := e.Object.(*batch.Job)
+// 			if job.Status.Succeeded > 0 || job.Status.Failed >= utils.Int32(job.Spec.BackoffLimit) {
+// 				return false
+// 			}
+// 			return false
+// 		},
+// 	}
+// 	return jobPred
+// }
 
 //+kubebuilder:rbac:groups=redis.kun,resources=redisclusterbackups,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=redis.kun,resources=redisclusterbackups/status,verbs=get;update;patch
@@ -179,9 +181,6 @@ func (r *RedisClusterBackupReconciler) Reconcile(ctx context.Context, request ct
 
 	reqLogger := logl.WithValues("Request.Namespace", request.Namespace, "Request.Name", request.Name)
 	reqLogger.Info("Reconciling RedisClusterBackup")
-	var sched cron.Schedule
-	var cronEnabled bool = false
-	var backupSchedTime time.Duration
 
 	// Fetch the RedisClusterBackup instance
 	instance := &redisv1alpha1.RedisClusterBackup{}
@@ -197,114 +196,75 @@ func (r *RedisClusterBackupReconciler) Reconcile(ctx context.Context, request ct
 		return reconcile.Result{}, err
 	}
 
-	//// Check if the RedisClusterBackup instance is marked to be deleted, which is
-	//// indicated by the deletion timestamp being set.
-	//isBackupMarkedToBeDeleted := instance.GetDeletionTimestamp() != nil
-	//if isBackupMarkedToBeDeleted {
-	//	if contains(instance.GetFinalizers(), backupFinalizer) {
-	//		// Run finalization logic for backupFinalizer. If the
-	//		// finalization logic fails, don't remove the finalizer so
-	//		// that we can retry during the next reconciliation.
-	//		if err := r.finalizeBackup(reqLogger, instance); err != nil {
-	//			return reconcile.Result{}, err
-	//		}
-	//
-	//		// Remove backupFinalizer. Once all finalizers have been
-	//		// removed, the object will be deleted.
-	//		instance.SetFinalizers(remove(instance.GetFinalizers(), backupFinalizer))
-	//		err := r.client.Update(context.TODO(), instance)
-	//		if err != nil {
-	//			return reconcile.Result{}, err
-	//		}
-	//	}
-	//	return reconcile.Result{}, nil
-	//}
-
-	//// Add finalizer for this CR
-	//if !contains(instance.GetFinalizers(), backupFinalizer) {
-	//	if err := r.addFinalizer(reqLogger, instance); err != nil {
-	//		return reconcile.Result{}, err
-	//	}
-	//}
-	if instance.Spec.BackupCron && len(instance.Spec.BackupSchedule) != 0 {
-		reqLogger.Info("Getting backup schedule info")
-		sched, err = cron.ParseStandard(instance.Spec.BackupSchedule)
-		if err != nil {
-			reqLogger.Error(err, "Error Parsing cron schedule")
-			return reconcile.Result{}, fmt.Errorf("unparaseable schedule %q: %v", instance.Spec.BackupSchedule, err)
-		}
-		cronEnabled = true
-	}
-	err, cronRetry := r.create(reqLogger, instance)
-	if cronEnabled && cronRetry {
-		backupSchedTime = (sched.Next(time.Now()).Sub(time.Now()))
-		reqLogger.Info("cron Retry", "Backup Schedule time", backupSchedTime)
-	}
-	if cronRetry {
-		if err != nil {
-			return reconcile.Result{RequeueAfter: backupSchedTime}, err
-		} else {
-			return reconcile.Result{RequeueAfter: backupSchedTime}, nil
-		}
-
+	cluster, err := r.CrController.GetDistributedRedisCluster(instance.Namespace, instance.Spec.RedisClusterName)
+	if err != nil {
+		reqLogger.Error(err, "Unable to get cluster instance")
+		return reconcile.Result{RequeueAfter: time.Duration(60) * time.Second}, nil
 	}
 
-	return ctrl.Result{}, nil
+	//Create Util Deployment
+	err = r.reconcileUtilDeployment(reqLogger, instance, cluster)
+	if err != nil {
+		reqLogger.Error(err, "Unable to create Util Deployment due to the above erros, Kindly fix them!")
+	}
+
+	// Add the other operations of the Util Controller here...
+
+	return reconcile.Result{RequeueAfter: time.Duration(60) * time.Second}, nil
 }
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *RedisClusterBackupReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&rediskunv1alpha1.RedisClusterBackup{}, builder.WithPredicates(redisbackupcontrollerPredfunction())).
-		Owns(&batch.Job{}, builder.WithPredicates(backupcontrollerjobPredfunction())).
+		For(&redisv1alpha1.RedisClusterBackup{}, builder.WithPredicates(redisbackupcontrollerPredfunction())).
 		WithOptions(controller.Options{MaxConcurrentReconciles: maxConcurrentReconciles}).
 		Complete(r)
 }
 
-func (r *RedisClusterBackupReconciler) finalizeBackup(reqLogger logr.Logger, b *redisv1alpha1.RedisClusterBackup) error {
-	// TODO(user): Add the cleanup steps that the operator
-	// needs to do before the CR can be deleted. Examples
-	// of finalizers include performing backups and deleting
-	// resources that are not owned by this CR, like a PVC.
-	reqLogger.Info("Successfully finalized RedisClusterBackup")
-	return nil
-}
+// func (r *RedisClusterBackupReconciler) finalizeBackup(reqLogger logr.Logger, b *redisv1alpha1.RedisClusterBackup) error {
+// 	// TODO(user): Add the cleanup steps that the operator
+// 	// needs to do before the CR can be deleted. Examples
+// 	// of finalizers include performing backups and deleting
+// 	// resources that are not owned by this CR, like a PVC.
+// 	reqLogger.Info("Successfully finalized RedisClusterBackup")
+// 	return nil
+// }
 
-func (r *RedisClusterBackupReconciler) addFinalizer(reqLogger logr.Logger, b *redisv1alpha1.RedisClusterBackup) error {
-	reqLogger.Info("Adding Finalizer for the backup")
-	b.SetFinalizers(append(b.GetFinalizers(), backupFinalizer))
+// func (r *RedisClusterBackupReconciler) addFinalizer(reqLogger logr.Logger, b *redisv1alpha1.RedisClusterBackup) error {
+// 	reqLogger.Info("Adding Finalizer for the backup")
+// 	b.SetFinalizers(append(b.GetFinalizers(), backupFinalizer))
 
-	// Update CR
-	err := r.Client.Update(context.TODO(), b)
-	if err != nil {
-		reqLogger.Error(err, "Failed to update RedisClusterBackup with finalizer")
-		return err
-	}
-	return nil
-}
+// 	// Update CR
+// 	err := r.Client.Update(context.TODO(), b)
+// 	if err != nil {
+// 		reqLogger.Error(err, "Failed to update RedisClusterBackup with finalizer")
+// 		return err
+// 	}
+// 	return nil
+// }
 
-func contains(list []string, s string) bool {
-	for _, v := range list {
-		if v == s {
-			return true
-		}
-	}
-	return false
-}
+// func contains(list []string, s string) bool {
+// 	for _, v := range list {
+// 		if v == s {
+// 			return true
+// 		}
+// 	}
+// 	return false
+// }
 
-func remove(list []string, s string) []string {
-	for i, v := range list {
-		if v == s {
-			list = append(list[:i], list[i+1:]...)
-		}
-	}
-	return list
-}
+// func remove(list []string, s string) []string {
+// 	for i, v := range list {
+// 		if v == s {
+// 			list = append(list[:i], list[i+1:]...)
+// 		}
+// 	}
+// 	return list
+// }
 
-func isJobCompleted(newJob *batch.Job) bool {
-	if isJobFinished(newJob) {
-		logl.WithValues("Request.Namespace", newJob.Namespace).Info("JobFinished", "type", newJob.Status.Conditions[0].Type, "job", newJob.Name)
-		return true
-	}
-	return false
-}
+// func isJobCompleted(newJob *batch.Job) bool {
+// 	if isJobFinished(newJob) {
+// 		logl.WithValues("Request.Namespace", newJob.Namespace).Info("JobFinished", "type", newJob.Status.Conditions[0].Type, "job", newJob.Name)
+// 		return true
+// 	}
+// 	return false
+// }

@@ -1,94 +1,247 @@
 # redis-cluster-operator
-// TODO(user): Add simple overview of use/purpose
 
-## Description
-// TODO(user): An in-depth paragraph about your project and overview of use
+## Overview
 
-## Getting Started
-You’ll need a Kubernetes cluster to run against. You can use [KIND](https://sigs.k8s.io/kind) to get a local cluster for testing, or run against a remote cluster.
-**Note:** Your controller will automatically use the current context in your kubeconfig file (i.e. whatever cluster `kubectl cluster-info` shows).
+Redis Cluster Operator manages [Redis Cluster](https://redis.io/topics/cluster-spec) atop Kubernetes.
 
-### Running on the cluster
-1. Install Instances of Custom Resources:
+The operator itself is built with the [Operator framework](https://github.com/operator-framework/operator-sdk).
 
-```sh
-kubectl apply -f config/samples/
+![Redis Cluster atop Kubernetes](/static/redis-cluster.png)
+
+Each master node and its slave nodes is managed by a statefulSet, create a headless svc for each statefulSet,
+and create a clusterIP service for all nodes.
+
+Each statefulset uses PodAntiAffinity to ensure that the master and slaves are dispersed on different nodes.
+At the same time, when the operator selects the master in each statefulset, it preferentially select the pod
+with different k8s nodes as master.
+
+Table of Contents
+=================
+
+   * [redis-cluster-operator](#redis-cluster-operator)
+      * [Overview](#overview)
+   * [Table of Contents](#table-of-contents)
+      * [Prerequisites](#prerequisites)
+      * [Features](#features)
+      * [Quick Start](#quick-start)
+         * [Deploy redis cluster operator](#deploy-redis-cluster-operator)
+            * [Install Step by step](#install-step-by-step)
+            * [Install using helm chart](#install-using-helm-chart)
+         * [Usage](#usage)
+            * [Deploy a sample Redis Cluster](#deploy-a-sample-redis-cluster)
+            * [Scaling Up the Redis Cluster](#scaling-up-the-redis-cluster)
+            * [Scaling Down the Redis Cluster](#scaling-down-the-redis-cluster)
+            * [Backup and Restore](#backup-and-restore)
+            * [Prometheus Discovery](#prometheus-discovery)
+            * [Create Redis Cluster with password](#create-redis-cluster-with-password)
+            * [Persistent Volume](#persistent-volume)
+            * [Custom Configuration](#custom-configuration)
+            * [Custom Service](#custom-service)
+            * [Custom Resource](#custom-resource)
+      * [ValidatingWebhook](#validatingwebhook)
+      * [End to end tests](#end-to-end-tests)
+
+## Prerequisites
+
+* go version v1.13+.
+* Access to a Kubernetes v1.13.10 cluster.
+
+## Features
+
+- __Customize the number of master nodes and the number of replica nodes per master__
+
+- __Password__
+
+- __Safely Scaling the Redis Cluster__
+
+- __Backup and Restore__
+
+- __Persistent Volume__
+
+- __Custom Configuration__
+
+- __Prometheus Discovery__
+
+## Quick Start
+
+### Deploy redis cluster operator
+
+#### Install Step by step
+
+Register the DistributedRedisCluster and RedisClusterBackup custom resource definition (CRD).
+```
+$ kubectl create -f deploy/crds/redis.kun_distributedredisclusters_crd.yaml
+$ kubectl create -f deploy/crds/redis.kun_redisclusterbackups_crd.yaml
 ```
 
-2. Build and push your image to the location specified by `IMG`:
+A namespace-scoped operator watches and manages resources in a single namespace, whereas a cluster-scoped operator watches and manages resources cluster-wide.
+You can chose run your operator as namespace-scoped or cluster-scoped.
+```
+// cluster-scoped
+$ kubectl create -f deploy/service_account.yaml
+$ kubectl create -f deploy/cluster/cluster_role.yaml
+$ kubectl create -f deploy/cluster/cluster_role_binding.yaml
+$ kubectl create -f deploy/cluster/operator.yaml
 
-```sh
-make docker-build docker-push IMG=<some-registry>/redis-cluster-operator:tag
+// namespace-scoped
+$ kubectl create -f deploy/service_account.yaml
+$ kubectl create -f deploy/namespace/role.yaml
+$ kubectl create -f deploy/namespace/role_binding.yaml
+$ kubectl create -f deploy/namespace/operator.yaml
 ```
 
-3. Deploy the controller to the cluster with the image specified by `IMG`:
+#### Install using helm chart
 
-```sh
-make deploy IMG=<some-registry>/redis-cluster-operator:tag
+Add Helm repository
+```
+helm repo add ucloud-operator https://ucloud.github.io/redis-cluster-operator/
+helm repo update
 ```
 
-### Uninstall CRDs
-To delete the CRDs from the cluster:
-
-```sh
-make uninstall
+Install chart
+```
+helm install --generate-name ucloud-operator/redis-cluster-operator
 ```
 
-### Undeploy controller
-UnDeploy the controller from the cluster:
-
-```sh
-make undeploy
+Verify that the redis-cluster-operator is up and running:
+```
+$ kubectl get deployment
+NAME                     READY   UP-TO-DATE   AVAILABLE   AGE
+redis-cluster-operator   1/1     1            1           1d
 ```
 
-## Contributing
-// TODO(user): Add detailed information on how you would like others to contribute to this project
+### Usage
+#### Deploy a sample Redis Cluster
 
-### How it works
-This project aims to follow the Kubernetes [Operator pattern](https://kubernetes.io/docs/concepts/extend-kubernetes/operator/).
+NOTE: **Only the redis cluster that use persistent storage(pvc) can recover after accidental deletion or rolling update.Even if you do not use persistence(like rdb or aof), you need to set pvc for redis.**
 
-It uses [Controllers](https://kubernetes.io/docs/concepts/architecture/controller/),
-which provide a reconcile function responsible for synchronizing resources until the desired state is reached on the cluster.
-
-### Test It Out
-1. Install the CRDs into the cluster:
-
-```sh
-make install
+```
+$ kubectl apply -f deploy/example/redis.kun_v1alpha1_distributedrediscluster_cr.yaml
 ```
 
-2. Run your controller (this will run in the foreground, so switch to a new terminal if you want to leave it running):
+Verify that the cluster instances and its components are running.
+```
+$ kubectl get distributedrediscluster
+NAME                              MASTERSIZE   STATUS    AGE
+example-distributedrediscluster   3            Scaling   11s
 
-```sh
-make run
+$ kubectl get all -l redis.kun/name=example-distributedrediscluster
+NAME                                          READY   STATUS    RESTARTS   AGE
+pod/drc-example-distributedrediscluster-0-0   1/1     Running   0          2m48s
+pod/drc-example-distributedrediscluster-0-1   1/1     Running   0          2m8s
+pod/drc-example-distributedrediscluster-1-0   1/1     Running   0          2m48s
+pod/drc-example-distributedrediscluster-1-1   1/1     Running   0          2m13s
+pod/drc-example-distributedrediscluster-2-0   1/1     Running   0          2m48s
+pod/drc-example-distributedrediscluster-2-1   1/1     Running   0          2m15s
+
+NAME                                        TYPE        CLUSTER-IP      EXTERNAL-IP   PORT(S)              AGE
+service/example-distributedrediscluster     ClusterIP   172.17.132.71   <none>        6379/TCP,16379/TCP   2m48s
+service/example-distributedrediscluster-0   ClusterIP   None            <none>        6379/TCP,16379/TCP   2m48s
+service/example-distributedrediscluster-1   ClusterIP   None            <none>        6379/TCP,16379/TCP   2m48s
+service/example-distributedrediscluster-2   ClusterIP   None            <none>        6379/TCP,16379/TCP   2m48s
+
+NAME                                                     READY   AGE
+statefulset.apps/drc-example-distributedrediscluster-0   2/2     2m48s
+statefulset.apps/drc-example-distributedrediscluster-1   2/2     2m48s
+statefulset.apps/drc-example-distributedrediscluster-2   2/2     2m48s
+
+$ kubectl get distributedrediscluster
+NAME                              MASTERSIZE   STATUS    AGE
+example-distributedrediscluster   3            Healthy   4m
 ```
 
-**NOTE:** You can also run this in one step by running: `make install run`
+#### Scaling Up the Redis Cluster
 
-### Modifying the API definitions
-If you are editing the API definitions, generate the manifests such as CRs or CRDs using:
+Increase the masterSize to trigger the scaling up.
 
-```sh
-make manifests
+```
+apiVersion: redis.kun/v1alpha1
+kind: DistributedRedisCluster
+metadata:
+  annotations:
+    # if your operator run as cluster-scoped, add this annotations
+    redis.kun/scope: cluster-scoped
+  name: example-distributedrediscluster
+spec:
+  # Increase the masterSize to trigger the scaling.
+  masterSize: 4
+  ClusterReplicas: 1
+  image: redis:5.0.4-alpine
 ```
 
-**NOTE:** Run `make --help` for more information on all potential `make` targets
+#### Scaling Down the Redis Cluster
 
-More information can be found via the [Kubebuilder Documentation](https://book.kubebuilder.io/introduction.html)
+Decrease the masterSize to trigger the scaling down.
 
-## License
+```
+apiVersion: redis.kun/v1alpha1
+kind: DistributedRedisCluster
+metadata:
+  annotations:
+    # if your operator run as cluster-scoped, add this annotations
+    redis.kun/scope: cluster-scoped
+  name: example-distributedrediscluster
+spec:
+  # Increase the masterSize to trigger the scaling.
+  masterSize: 3
+  ClusterReplicas: 1
+  image: redis:5.0.4-alpine
+```
 
-Copyright 2023.
+#### Backup and Restore
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+NOTE: **Only Ceph S3 object storage and PVC is supported now**
 
-    http://www.apache.org/licenses/LICENSE-2.0
+Backup
+```
+$ kubectl create -f deploy/example/backup-restore/redisclusterbackup_cr.yaml
+```
 
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+Restore from backup
+```
+$ kubectl create -f deploy/example/backup-restore/restore.yaml
+```
 
+#### Prometheus Discovery
+
+```
+$ kubectl create -f deploy/example/prometheus-exporter.yaml
+```
+
+#### Create Redis Cluster with password
+
+```
+$ kubectl create -f deploy/example/custom-password.yaml
+```
+
+#### Persistent Volume
+
+```
+$ kubectl create -f deploy/example/persistent.yaml
+```
+
+#### Custom Configuration
+
+```
+$ kubectl create -f deploy/example/custom-config.yaml
+```
+
+#### Custom Service
+
+```
+$ kubectl create -f deploy/example/custom-service.yaml
+```
+
+#### Custom Resource
+
+```
+$ kubectl create -f deploy/example/custom-resources.yaml
+```
+
+## ValidatingWebhook
+
+see [ValidatingWebhook](/hack/webhook/README.md)
+
+## End to end tests
+
+see [e2e](/test/e2e/README.md)
