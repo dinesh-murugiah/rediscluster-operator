@@ -113,7 +113,7 @@ func main() {
 	utils.SetClusterScoped("")
 	defaultNamespaces := make(map[string]cache.Config)
 
-	for _, ns := range utils.namespaceList {
+	for _, ns := range utils.GetNamespaceList() {
 		defaultNamespaces[ns] = cache.Config{}
 	}
 
@@ -135,10 +135,7 @@ func main() {
 		// after the manager stops then its usage might be unsafe.
 		// LeaderElectionReleaseOnCancel: true,
 		NewCache: func(config *rest.Config, opts cache.Options) (cache.Cache, error) {
-			opts.DefaultNamespaces = map[string]cache.Config{
-				"test-cluster-dinesh": {},
-				"test-cluster-hatest": {},
-			}
+			opts.DefaultNamespaces = defaultNamespaces
 			return cache.New(config, opts)
 		},
 	})

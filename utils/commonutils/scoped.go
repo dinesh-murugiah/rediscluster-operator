@@ -13,12 +13,16 @@ const (
 	AnnotationNamespaceScoped = "namespace-scoped"
 )
 
-var namespaceList = [3]string{"test-cluster-dinesh", "test-cluster-hatest"}
+var namespaceList = []string{"test-cluster-dinesh", "test-cluster-hatest"}
 
 var isClusterScoped = false
 
 func IsClusterScoped() bool {
 	return isClusterScoped
+}
+
+func GetNamespaceList() []string {
+	return namespaceList
 }
 
 func SetClusterScoped(namespace string) {
