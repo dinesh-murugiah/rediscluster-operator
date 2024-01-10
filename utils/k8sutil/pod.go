@@ -2,8 +2,10 @@ package k8sutil
 
 import (
 	"context"
+	"fmt"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -21,6 +23,10 @@ type IPodControl interface {
 	GetPod(namespace, name string) (*corev1.Pod, error)
 	// UpdatePodLabels updates label of a pod in a DistributedRedisCluster.
 	UpdatePodLabels(pod *corev1.Pod, labelKey string, labelValue string) error
+
+	ListPodsWithLabel(namespace string, labelkey string, labelvalue string) (*corev1.PodList, error)
+
+	UpdatePodAnnotations(pod *corev1.Pod, annotationKey string, annotationvalue string) error
 }
 
 type PodController struct {
@@ -57,6 +63,21 @@ func (p *PodController) DeletePodByName(namespace, name string) error {
 	return p.client.Delete(context.TODO(), pod)
 }
 
+func (p *PodController) UpdatePodAnnotations(pod *corev1.Pod, annotationKey string, annotationvalue string) error {
+
+	if _, ok := pod.ObjectMeta.Annotations[annotationKey]; !ok {
+		err := fmt.Errorf("Annotation %s Notfound", annotationKey)
+		return err
+	}
+
+	if pod.ObjectMeta.Annotations[annotationKey] == annotationvalue {
+		return nil
+	} else {
+		pod.ObjectMeta.Annotations[annotationKey] = annotationvalue
+		return p.UpdatePod(pod)
+	}
+}
+
 func (p *PodController) UpdatePodLabels(pod *corev1.Pod, labelKey string, labelValue string) error {
 
 	if pod.Labels == nil {
@@ -74,4 +95,15 @@ func (p *PodController) GetPod(namespace, name string) (*corev1.Pod, error) {
 		Namespace: namespace,
 	}, pod)
 	return pod, err
+}
+
+func (p *PodController) ListPodsWithLabel(namespace string, labelkey string, labelvalue string) (*corev1.PodList, error) {
+	podList := &corev1.PodList{}
+	err := p.client.List(context.TODO(), podList, &client.ListOptions{
+		Namespace: namespace,
+		LabelSelector: labels.SelectorFromSet(labels.Set(map[string]string{
+			labelkey: labelvalue,
+		})),
+	})
+	return podList, err
 }

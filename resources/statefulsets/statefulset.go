@@ -58,6 +58,14 @@ func NewStatefulSetForCR(cluster *redisv1alpha1.DistributedRedisCluster, ssName,
 		*terminationGracePeriodSeconds = int64(30) //take default if not provided
 	}
 
+	//Enable affinity and topology spread constraints only if haenabled is true
+	var affinity *corev1.Affinity
+	var topologySpreadConstraints []corev1.TopologySpreadConstraint
+	if cluster.Spec.HaConfig.HaEnabled {
+		affinity = getAffinity(cluster, labels)
+		topologySpreadConstraints = getTopolgyspreadConstraints(cluster, ssName)
+	}
+
 	ss := &appsv1.StatefulSet{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:            ssName,
@@ -81,11 +89,11 @@ func NewStatefulSetForCR(cluster *redisv1alpha1.DistributedRedisCluster, ssName,
 				},
 				Spec: corev1.PodSpec{
 					ImagePullSecrets:          cluster.Spec.ImagePullSecrets,
-					Affinity:                  getAffinity(cluster, labels),
+					Affinity:                  affinity,
 					Tolerations:               spec.ToleRations,
 					SecurityContext:           spec.SecurityContext,
 					NodeSelector:              cluster.Spec.NodeSelector,
-					TopologySpreadConstraints: getTopolgyspreadConstraints(cluster, ssName),
+					TopologySpreadConstraints: topologySpreadConstraints,
 					Containers: []corev1.Container{
 						redisServerContainer(cluster, password),
 					},

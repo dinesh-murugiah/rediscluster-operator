@@ -34,18 +34,20 @@ type RedisClusterBackupSpec struct {
 	// Important: Run "make" to regenerate code after modifying this file
 
 	// Foo is an example field of RedisClusterBackup. Edit redisclusterbackup_types.go to remove/update
-	RedisClusterName string    `json:"redisClusterName"`
-	UtilSpec         *UtilSpec `json:"utilSpec"`
+	RedisClusterName string                     `json:"redisClusterName"`
+	UtilSpec         *UtilSpec                  `json:"utilSpec"`
+	SecurityContext  *corev1.PodSecurityContext `json:"securityContext"`
 }
 
 type UtilSpec struct {
-	Image                  string                       `json:"image"`
-	StartUpCommand         string                       `json:"startupCommand,omitempty"`
-	S3Bucket               string                       `json:"s3Bucket"`
-	ImagePullPolicy        string                       `json:"imagePullPolicy,omitempty"`
-	Replicas               int32                        `json:"replicas"`
-	TerminationGracePeriod *int64                       `json:"terminationGracePeriod"`
-	Resources              *corev1.ResourceRequirements `json:"resources,omitempty"`
+	Image                    string                       `json:"image"`
+	StartUpCommand           string                       `json:"startupCommand,omitempty"`
+	S3Bucket                 string                       `json:"s3Bucket"`
+	ImagePullPolicy          string                       `json:"imagePullPolicy,omitempty"`
+	Replicas                 int32                        `json:"replicas"`
+	TerminationGracePeriod   *int64                       `json:"terminationGracePeriod"`
+	Resources                *corev1.ResourceRequirements `json:"resources,omitempty"`
+	ContainerSecurityContext *corev1.SecurityContext      `json:"containerSecurityContext"`
 }
 
 type PodSpec struct {

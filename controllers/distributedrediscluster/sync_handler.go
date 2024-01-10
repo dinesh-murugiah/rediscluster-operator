@@ -96,11 +96,17 @@ func (r *DistributedRedisClusterReconciler) validateAndSetDefault(cluster *redis
 
 	} else {
 		if cluster.Spec.HaConfig.HaEnabled {
-			if cluster.Spec.HaConfig.ZonesInfo == nil || (len(cluster.Spec.HaConfig.ZonesInfo) < 1 || len(cluster.Spec.HaConfig.ZonesInfo) < 3) {
-				err = fmt.Errorf("haspec missing zone info")
+			//limit the HA solution to 3 zones , neither lesser nor higher
+			if cluster.Spec.HaConfig.ZonesInfo == nil || (len(cluster.Spec.HaConfig.ZonesInfo) != 3) {
+				err = fmt.Errorf("haspec missing zone info or incorrect zone info")
+				return err
+			}
+			if cluster.Spec.ClusterReplicas != int32(len(cluster.Spec.HaConfig.ZonesInfo)-1) {
+				err = fmt.Errorf("cluster replicas should be equal to availabilty zones")
 				return err
 			}
 		}
+
 	}
 
 	// TODO: DR-1173 Move this to validation webhook
@@ -346,7 +352,7 @@ func (r *DistributedRedisClusterReconciler) checkandUpdatePassword(admin redisut
 		ctx.reqLogger.Info("No changes in acl secrets, Proceeding..")
 		return nil, nil
 	}
-	ctx.reqLogger.Info("Difference in ACL found, trying to update password")
+	ctx.reqLogger.Info("Difference in ACL found, trying to update..")
 	SetClusterResetPassword(&ctx.cluster.Status, "Updating ACL's")
 	r.CrController.UpdateCRStatus(ctx.cluster)
 
@@ -488,8 +494,13 @@ func (r *DistributedRedisClusterReconciler) updatePodIfNeeded(ip string, pods []
 				}
 				return true, err
 			} else {
-				err := r.setRoleLabelIfNeeded(ip, pod, role, namespace, client)
-				return false, err
+				if err := r.setRoleLabelIfNeeded(ip, pod, role, namespace, client); err != nil {
+					return false, err
+				}
+				if err1 := r.setPodAnnotationIfNeeded(role, pod, client); err1 != nil {
+					return false, err1
+				}
+				return false, nil
 			}
 		}
 	}
@@ -503,6 +514,19 @@ func (r *DistributedRedisClusterReconciler) setRoleLabelIfNeeded(ip string, pod 
 		}
 	}
 	return client.UpdatePodLabels(pod, redisv1alpha1.RedisRoleLabelKey, role)
+}
+
+func (r *DistributedRedisClusterReconciler) setPodAnnotationIfNeeded(role string, pod *corev1.Pod, client k8sutil.IPodControl) error {
+
+	if role == string(redisv1alpha1.RedisClusterNodeRoleMaster) {
+		client.UpdatePodAnnotations(pod, redisv1alpha1.PodEvictAnnotation, "false")
+	} else if role == string(redisv1alpha1.RedisClusterNodeRoleSlave) {
+		client.UpdatePodAnnotations(pod, redisv1alpha1.PodEvictAnnotation, "true")
+	} else {
+		err := fmt.Errorf("setPodAnnotationIfNeeded - invalid role")
+		return err
+	}
+	return nil
 }
 
 func (r *DistributedRedisClusterReconciler) getRedisIPsByRole(admin redisutil.IAdmin, log logr.Logger) ([]string, []string, error) {

@@ -223,7 +223,7 @@ metadata:
     redis.kun/scope: cluster-scoped
   name: distributedrediscluster-test-cluster-1
 spec:
-  pdbEnabled: True
+  pdbEnabled: False
   additionalUsers:
   - name: dbaas-redis--test-cluster--test-cluster-1--dinesh
   - name: dbaas-redis--test-cluster--test-cluster-1--pinger
@@ -252,6 +252,12 @@ spec:
       value: "redis-logs-bucket-staging-us-east-1"
   utilConfig: "util-config"
   image: redis:6.2.13
+  haConfig:
+    haEnabled: false
+    zonesInfo:
+      us-east-1a: "10.235.182.0/24"
+      us-east-1b: "10.235.183.0/24"
+      us-east-1c: "10.235.184.0/24"
   initContainers:
   - name: initialize
     image: ubuntu:latest

@@ -71,8 +71,8 @@ func newRedisCluster(infos *redisutil.ClusterInfos, cluster *redisv1alpha1.Distr
 		rCluster.Nodes[node.ID] = node
 		//reqLogger.Info("newRedisCluster", "STS", node.StatefulSet, "NodeName", node.NodeName, "Zone", node.Zonename)
 		if node.Zonename == "" || node.Zonename == "unknown" {
-			err1 := fmt.Errorf("Zone label not found in node %s", node.NodeName)
-			reqLogger.Error(err1, "Unable to find Zone label", err1)
+			err1 := fmt.Errorf("zone label not found in node %s", node.NodeName)
+			reqLogger.Error(err1, "Unable to find Zone label", "err", err1)
 			return nil, nil, err1
 		}
 	}

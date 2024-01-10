@@ -23,6 +23,18 @@ const (
 	ClusterInfosConsistent = "Consistent"
 )
 
+type clusterstate string
+
+const (
+	ClusterStateUnknown      = "Unknown"
+	ClusterStateNOK          = "NOK"
+	ClusterStateOK           = "OK"
+	ClusterReasonScaling     = "Scaling"
+	ClusterReasonReplicaNOK  = "ReplicaNotReady"
+	ClusterStatusFail        = "ClusterStatusFail"
+	ClusterStatusNotRetrived = "ClusterStatusNotRetrived"
+)
+
 // NodeInfos representation of a node info, i.e. data returned by the CLUSTER NODE redis command
 // Node is the information of the targetted node
 // Friends are the view of the other nodes from the targetted node
@@ -33,8 +45,10 @@ type NodeInfos struct {
 
 // ClusterInfos represents the node infos for all nodes of the cluster
 type ClusterInfos struct {
-	Infos  map[string]*NodeInfos
-	Status string
+	Infos            map[string]*NodeInfos
+	Status           string
+	ClusterState     clusterstate
+	ClusterNokReason map[string]string
 }
 
 // NewNodeInfos returns an instance of NodeInfo
@@ -48,8 +62,10 @@ func NewNodeInfos() *NodeInfos {
 // NewClusterInfos returns an instance of ClusterInfos
 func NewClusterInfos() *ClusterInfos {
 	return &ClusterInfos{
-		Infos:  make(map[string]*NodeInfos),
-		Status: ClusterInfosUnset,
+		Infos:            make(map[string]*NodeInfos),
+		Status:           ClusterInfosUnset,
+		ClusterState:     ClusterStateUnknown,
+		ClusterNokReason: make(map[string]string),
 	}
 }
 

@@ -72,6 +72,7 @@ func utilGeneratePodTemplate(instance *redisv1alpha1.RedisClusterBackup, cluster
 			},
 		},
 		Spec: corev1.PodSpec{
+			SecurityContext: instance.Spec.SecurityContext,
 			Containers: []corev1.Container{
 				{
 					Name:            utilContainerName,
@@ -143,6 +144,7 @@ func utilGeneratePodTemplate(instance *redisv1alpha1.RedisClusterBackup, cluster
 							MountPath: "/data",
 						},
 					},
+					SecurityContext: instance.Spec.UtilSpec.ContainerSecurityContext,
 				},
 			},
 			Volumes:                       utilGenerateConfigmapVolumeSpec(cluster),

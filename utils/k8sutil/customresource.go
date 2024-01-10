@@ -2,6 +2,7 @@ package k8sutil
 
 import (
 	"context"
+	"fmt"
 
 	"k8s.io/apimachinery/pkg/types"
 
@@ -18,6 +19,7 @@ type ICustomResource interface {
 	UpdateCR(runtime.Object) error
 	GetRedisClusterBackup(namespace, name string) (*redisv1alpha1.RedisClusterBackup, error)
 	GetDistributedRedisCluster(namespace, name string) (*redisv1alpha1.DistributedRedisCluster, error)
+	UpdateCrdAnnotations(crd *redisv1alpha1.DistributedRedisCluster, annotationKey string, annotationvalue string) error
 }
 
 type clusterControl struct {
@@ -58,4 +60,18 @@ func (c *clusterControl) GetDistributedRedisCluster(namespace, name string) (*re
 		return nil, err
 	}
 	return drc, nil
+}
+
+func (c *clusterControl) UpdateCrdAnnotations(crd *redisv1alpha1.DistributedRedisCluster, annotationKey string, annotationvalue string) error {
+
+	if _, ok := crd.ObjectMeta.Annotations[annotationKey]; !ok {
+		return fmt.Errorf("annotation %s Notfound", annotationKey)
+	}
+
+	if crd.ObjectMeta.Annotations[annotationKey] == annotationvalue {
+		return nil
+	} else {
+		crd.ObjectMeta.Annotations[annotationKey] = annotationvalue
+		return c.UpdateCR(crd)
+	}
 }

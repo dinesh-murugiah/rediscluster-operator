@@ -66,23 +66,31 @@ func GenerateAclcommands(log logr.Logger, client client.Client, cluster *redisv1
 
 	//First add the set of usersnewly added if any and list of users for which acl rules changed
 	for key := range newsecretver {
+		//Sample value dbaas-redis--test-cluster--test-cluster-1--admin
+		aclSecretName := strings.Split(key, "--")
+		// Get the last element from the resulting slice
+		aclUser := aclSecretName[len(aclSecretName)-1]
 		if _, ok := existingsecretver[key]; !ok {
 			log.Info("diffAclConfigs", "New User found in latest secret", key)
-			aclcommands[key] = fmt.Sprintf("acl setuser %s", newacldata[key])
+			aclcommands[key] = fmt.Sprintf("acl setuser %s", newacldata[aclUser])
 		} else if map1Value, ok := existingsecretver[key]; ok {
 			map2Value := newsecretver[key]
 			if !reflect.DeepEqual(map1Value, map2Value) {
-				log.Info("diffAclConfigs", "update in acl data found for user/secret", key, "command:", newacldata[key])
-				aclcommands[key] = fmt.Sprintf("acl setuser %s", newacldata[key])
+				log.Info("diffAclConfigs", "update in acl data found for user/secret", key, "command:", newacldata[aclUser])
+				aclcommands[key] = fmt.Sprintf("acl setuser %s", newacldata[aclUser])
 			}
 		}
 	}
 
 	// Give deluser for the users which are to be removed
 	for key := range existingsecretver {
+		//Sample value dbaas-redis--test-cluster--test-cluster-1--admin
+		aclSecretName := strings.Split(key, "--")
+		// Get the last element from the resulting slice
+		aclUser := aclSecretName[len(aclSecretName)-1]
 		if _, ok := newsecretver[key]; !ok {
 			log.Info("diffAclConfigs", "User not found in latest secret, possibly deleted", key)
-			aclcommands[key] = fmt.Sprintf("acl setuser %s", key)
+			aclcommands[key] = fmt.Sprintf("acl deluser %s", aclUser)
 		}
 	}
 
@@ -105,14 +113,13 @@ func parseAclInput(input string) map[string]string {
 		fields := strings.Fields(line)
 
 		if len(fields) >= 3 && fields[0] == "user" {
-			if fields[1] != "admin" && fields[1] != "pinger" {
+			if fields[1] != "admin" {
 				key := fields[1]
 				value := strings.Join(fields[1:], " ")
 				data[key] = value
 			}
 		}
 	}
-
 	return data
 }
 func IsdiffAclConfigs(curr_map, check_map map[string]string, logger logr.Logger) bool {

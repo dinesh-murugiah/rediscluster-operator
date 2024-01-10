@@ -19,6 +19,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"net/http"
 	"os"
 	goruntime "runtime"
 
@@ -42,24 +43,25 @@ import (
 	"github.com/dinesh-murugiah/rediscluster-operator/controllers/distributedrediscluster"
 	clustermanger "github.com/dinesh-murugiah/rediscluster-operator/controllers/manager"
 	"github.com/dinesh-murugiah/rediscluster-operator/controllers/redisclusterbackup"
+	"github.com/dinesh-murugiah/rediscluster-operator/metrics"
 	config2 "github.com/dinesh-murugiah/rediscluster-operator/redisconfig"
 	utils "github.com/dinesh-murugiah/rediscluster-operator/utils/commonutils"
 	"github.com/dinesh-murugiah/rediscluster-operator/utils/exec"
 	"github.com/dinesh-murugiah/rediscluster-operator/utils/k8sutil"
 	"github.com/dinesh-murugiah/rediscluster-operator/version"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/spf13/pflag"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	//+kubebuilder:scaffold:imports
 )
 
-/*
 var (
 	metricsHost               = "0.0.0.0"
 	metricsPort         int32 = 8383
 	operatorMetricsPort int32 = 8686
 )
-*/
 
 var (
 	scheme     = runtime.NewScheme()
@@ -99,6 +101,25 @@ func main() {
 	pflag.CommandLine.AddFlagSet(distributedrediscluster.FlagSet())
 	pflag.CommandLine.AddFlagSet(redisclusterbackup.FlagSet())
 
+	http.Handle("/metrics", promhttp.Handler())
+
+	http.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("OK"))
+	})
+
+	go func() {
+		if err := http.ListenAndServe(fmt.Sprintf(":%d", 9297), nil); err != nil {
+			panic(err)
+		}
+	}()
+
+	// Create a Prometheus registry
+	reg := prometheus.NewRegistry()
+
+	// Use the NewRecorder function from the metrics package to create an instance of Recorder
+	recorder := metrics.NewRecorder("redisoperator", reg)
+
 	// Add flags registered by imported packages (e.g. glog and
 	// controller-runtime)
 	pflag.CommandLine.AddGoFlagSet(flag.CommandLine)
@@ -110,19 +131,14 @@ func main() {
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
 	printVersion()
 
-	utils.SetClusterScoped("")
-	defaultNamespaces := make(map[string]cache.Config)
+	utils.SetOperatorScope()
 
-	for _, ns := range utils.GetNamespaceList() {
-		defaultNamespaces[ns] = cache.Config{}
-	}
-
-	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
+	mgroptions := ctrl.Options{
 		Scheme:                 scheme,
 		Metrics:                metricsserver.Options{BindAddress: metricsAddr},
 		HealthProbeBindAddress: probeAddr,
 		LeaderElection:         enableLeaderElection,
-		LeaderElectionID:       "9973c3fe.redis.kun",
+		LeaderElectionID:       "9973c4fe.redis.kun",
 		// LeaderElectionReleaseOnCancel defines if the leader should step down voluntarily
 		// when the Manager ends. This requires the binary to immediately end when the
 		// Manager is stopped, otherwise, this setting is unsafe. Setting this significantly
@@ -134,11 +150,30 @@ func main() {
 		// if you are doing or is intended to do any operation such as perform cleanups
 		// after the manager stops then its usage might be unsafe.
 		// LeaderElectionReleaseOnCancel: true,
-		NewCache: func(config *rest.Config, opts cache.Options) (cache.Cache, error) {
+	}
+
+	if utils.IsClusterScoped() {
+		setupLog.Info("Operator is running in cluster scope")
+	} else {
+		setupLog.Info("Operator is running in namespace scope")
+		err := utils.GenerateNamespaceList(setupLog)
+		if err != nil {
+			os.Exit(1)
+		}
+
+		defaultNamespaces := make(map[string]cache.Config)
+		nslist := utils.GetNamespaceList()
+
+		for _, ns := range nslist {
+			defaultNamespaces[ns] = cache.Config{}
+		}
+		mgroptions.NewCache = func(config *rest.Config, opts cache.Options) (cache.Cache, error) {
 			opts.DefaultNamespaces = defaultNamespaces
 			return cache.New(config, opts)
-		},
-	})
+		}
+	}
+
+	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), mgroptions)
 	if err != nil {
 		setupLog.Error(err, "unable to start manager")
 		os.Exit(1)
@@ -172,8 +207,12 @@ func main() {
 		Execer:                exec.NewRemoteExec(restClient, mgr.GetConfig(), clusterLog),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "DistributedRedisCluster")
+		//metric here
+		recorder.SetControllerError("Controller", "DistributedRedisCluster")
 		os.Exit(1)
 	}
+
+	recorder.SetControllerSuccess("Controller", "DistributedRedisCluster") // test
 
 	redisclusterbackupclient := mgr.GetClient()
 	redisclusterbackupdrclient := redisclusterbackup.NewDirectClient(mgr.GetConfig())
@@ -191,6 +230,8 @@ func main() {
 		Recorder:              mgr.GetEventRecorderFor("redis-cluster-operator-backup"),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "RedisClusterBackup")
+		recorder.SetControllerError("Controller", "RedisClusterBackup")
+		//metric here
 		os.Exit(1)
 	}
 	//+kubebuilder:scaffold:builder
@@ -213,6 +254,7 @@ func main() {
 		*/
 		if err = (&rediskunv1alpha1.DistributedRedisCluster{}).SetupWebhookWithManager(mgr); err != nil {
 			log.Error(err, "unable to create webHook", "webHook", "DistributedRedisCluster")
+			//metric here
 			os.Exit(1)
 		}
 	}
@@ -220,6 +262,7 @@ func main() {
 	setupLog.Info("starting manager")
 	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
 		setupLog.Error(err, "problem running manager")
+		//metric here
 		os.Exit(1)
 	}
 }
