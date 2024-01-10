@@ -10,7 +10,7 @@ ARG REPO_PATH=github.com/dinesh-murugiah/$PROJECT_NAME
 ARG BUILD_PATH=${REPO_PATH}
 
 # Build version and commit should be passed in when performing docker build
-ARG VERSION=0.1.1
+ARG VERSION=0.1.2
 ARG GIT_SHA=0000000
 
 WORKDIR /workspace
@@ -23,6 +23,7 @@ RUN go mod download
 
 # Copy the go source
 COPY main.go main.go
+COPY metrics/ metrics/
 COPY api/ api/
 COPY controllers/ controllers/
 COPY osm/   osm/
